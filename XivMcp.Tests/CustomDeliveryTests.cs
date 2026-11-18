@@ -60,6 +60,16 @@ public class DeliveryPlanTests
     }
 
     [Fact]
+    public void A_bonus_does_not_put_a_finished_achievement_first()
+    {
+        var plan = DeliveryPlan.Choose(
+            [Npc("Zhloe", bonus: DeliveryKind.Craft) with { AchievementLeft = 0 }, Npc("Nitowikwe") with { AchievementLeft = 103 },
+             Npc("Anden", bonus: DeliveryKind.Craft) with { AchievementLeft = 98 }],
+            All, allowances: 12);
+        Assert.Equal(["Anden", "Nitowikwe"], plan.Select(p => p.Npc.Name));
+    }
+
+    [Fact]
     public void Rank_ups_come_before_a_bonus()
     {
         var plan = DeliveryPlan.Choose([Npc("Ameliance", bonus: DeliveryKind.Craft), Npc("Tiisol Ja") with { GainsRank = true }], All, allowances: 6);

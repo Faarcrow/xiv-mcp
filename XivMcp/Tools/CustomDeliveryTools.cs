@@ -58,8 +58,8 @@ internal static class CustomDeliveryTools
         {
             Name = "do_custom_deliveries",
             Description = "Starts a background job for this week's custom deliveries: plans every client's remaining deliveries within the " +
-                          "weekly allowance (clients below their top rank first, then clients with a bonus request, then those whose " +
-                          "'The Customer Is Always Right' achievements need the most deliveries; per client the bonus request first, then " +
+                          "weekly allowance (clients below their top rank first; clients whose 'The Customer Is " +
+                          "Always Right' achievements are done last; then clients with a bonus request, then those needing the most deliveries; per client the bonus request first, then " +
                           "crafting as far as the scrip cap allows, gathering with Miner or Botanist for the rest; never fishing unless " +
                           "asked for; only kinds a plugin can do), then " +
                           "delivers them one client after another with deliver_custom_delivery. Fishing requests are caught first with " +

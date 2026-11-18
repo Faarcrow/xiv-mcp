@@ -29,8 +29,8 @@ public sealed record DeliveryRun(DeliveryNpc Npc, DeliveryKind Kind, int Count);
 
 /// <summary>
 /// Which deliveries to make this week, within the weekly allowance shared by all clients. Clients that still rank up first (their
-/// deliveries raise their rank), then those with a bonus on a request that can be delivered, then those whose achievements need the
-/// most deliveries, the others in the game's order. Per client the bonus request first, then crafting (crafters' scrips buy the more
+/// deliveries raise their rank), then those whose achievements still need deliveries, among them first those with a bonus on a
+/// request that can be delivered, then those whose achievements need the most deliveries, the others in the game's order. Per client the bonus request first, then crafting (crafters' scrips buy the more
 /// valuable materia), gathering for what crafting leaves (a request that takes fewer than the client does, or scrips at their cap);
 /// fishing only when asked for.
 /// </summary>
@@ -51,7 +51,9 @@ public static class DeliveryPlan
         var kinds = kind is { } k ? (possible.Contains(k) ? [k] : []) : Order.Where(possible.Contains).ToArray();
         bool HasBonus(DeliveryNpc n) => kinds.Any(c => n.Bonus.Contains(c) && n.RemainingFor(c) > 0);
         // The sorts are stable: the others keep the game's order.
-        var ordered = npcs.OrderByDescending(n => n.GainsRank).ThenByDescending(HasBonus).ThenByDescending(n => n.AchievementLeft ?? 0);
+        // A client whose achievements are done goes behind those still needing deliveries, even with a bonus (unknown counts as needing).
+        var ordered = npcs.OrderByDescending(n => n.GainsRank).ThenByDescending(n => n.AchievementLeft != 0).ThenByDescending(HasBonus)
+                          .ThenByDescending(n => n.AchievementLeft ?? 0);
         foreach (var npc in ordered)
         {
             if (allowances <= 0) break;
