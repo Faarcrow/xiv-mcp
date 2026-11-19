@@ -641,14 +641,22 @@ internal static class MarketTools
         using var feedback = new GameCommands.Feedback();
         try
         {
-            var clicked = await Game.Run(() =>
+            // The sell window can take a moment before its button takes a click (it is still setting up after "Adjust price").
+            var clicked = false;
+            var clickUntil = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (true)
             {
-                unsafe
+                clicked = await Game.Run(() =>
                 {
-                    var sell = (AddonRetainerSell*)Svc.GameGui.GetAddonByName<AtkUnitBase>("RetainerSell", 1);
-                    return sell != null && VentureTools.Click(&sell->AtkUnitBase, sell->ComparePrices);
-                }
-            }).ConfigureAwait(false);
+                    unsafe
+                    {
+                        var sell = (AddonRetainerSell*)Svc.GameGui.GetAddonByName<AtkUnitBase>("RetainerSell", 1);
+                        return sell != null && sell->AtkUnitBase.IsReady && VentureTools.Click(&sell->AtkUnitBase, sell->ComparePrices);
+                    }
+                }).ConfigureAwait(false);
+                if (clicked || DateTime.UtcNow > clickUntil) break;
+                await Task.Delay(250, ct).ConfigureAwait(false);
+            }
             if (!clicked) throw new ToolException("Could not click \"Compare prices\".");
             lastCompare = DateTime.UtcNow;
             // Nobody selling: the server sends no offerings, the search window just shows no results. Tell that from a throttled search
