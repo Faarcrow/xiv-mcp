@@ -166,8 +166,15 @@ internal static class MarketTools
                     var retainer = await Game.RunLoggedIn(() => { RequireBell(); compat.AcquireBell(); return ResolveRetainer(name); }).ConfigureAwait(false);
                     await RetainerUi.OpenMenu(retainer, ct).ConfigureAwait(false);
                     await SelectAndWait(AddonSaleHistory, "RetainerHistory", ct).ConfigureAwait(false);
-                    await Task.Delay(800, ct).ConfigureAwait(false); // rows arrive from the server
-                    var rows = await Game.Run(ReadHistory).ConfigureAwait(false);
+                    // The rows arrive from the server, sometimes after several seconds: read until some show up. A retainer
+                    // that never sold anything keeps an empty list, so give up after a while.
+                    var rows = new List<object>();
+                    var until = DateTime.UtcNow.AddSeconds(5);
+                    do
+                    {
+                        await Task.Delay(400, ct).ConfigureAwait(false);
+                        rows = await Game.Run(ReadHistory).ConfigureAwait(false);
+                    } while (rows.Count == 0 && DateTime.UtcNow < until);
                     await Game.Run(() => { CloseAddon("RetainerHistory"); return true; }).ConfigureAwait(false);
                     await RetainerUi.Close(ct).ConfigureAwait(false);
                     return new { retainer, sales = rows, count = rows.Count };
