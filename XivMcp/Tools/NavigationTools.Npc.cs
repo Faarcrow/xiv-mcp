@@ -104,6 +104,10 @@ internal static partial class NavigationTools
             await GuideTeleport(plan.Value.AetheryteId, plan.Value.Shard, spot.Territory, steps, ct).ConfigureAwait(false);
         else if (plan is not null)
         {
+            // A window that holds the character (the retainer list AutoRetainer's retainer sense opens at a bell, a shop, a
+            // conversation) makes the teleport fail silently: close it first.
+            if (await Game.Run(() => Recovery.Occupied).ConfigureAwait(false) && await Recovery.Run(ct).ConfigureAwait(false) is { } freed)
+                steps.AddRange(freed.Actions);
             phase = $"travelling to {plan.Value.Label}";
             // Lifestream can't leave an inn room, and "/li <shard>" can pick another city's shard of the same name: then the game's
             // own teleport goes to the right city first.
