@@ -22,10 +22,13 @@ internal static partial class NavigationTools
     /// Starts a vnavmesh path to <paramref name="target"/>; mounts up first for a longer walk and flies where the zone allows it.
     /// Returns whether vnavmesh started the path.
     /// </summary>
-    internal static async Task<bool> StartPath(Vector3 target, float range, List<string> steps, CancellationToken ct)
+    internal static async Task<bool> StartPath(Vector3 target, float range, List<string> steps, CancellationToken ct, bool forceMount = false)
     {
         var enabled = Plugin.Instance?.Config.UseMountForWalks ?? true;
-        var choice = await Game.Run(() => Mounting.Choose(Game.DistanceToPlayer(target) ?? 0, enabled, Mounted, CanMount(), CanFly())).ConfigureAwait(false);
+        // forceMount: walking didn't get there, so mount up to fly over the obstacle however short the way (only where flying is allowed).
+        var choice = await Game.Run(() => forceMount && !Mounted && CanMount() && CanFly()
+            ? MountChoice.Mount
+            : Mounting.Choose(Game.DistanceToPlayer(target) ?? 0, enabled, Mounted, CanMount(), CanFly())).ConfigureAwait(false);
         if (choice == MountChoice.Mount)
         {
             await Game.Run(() => { unsafe { return ActionManager.Instance()->UseAction(ActionType.GeneralAction, MountRoulette); } }).ConfigureAwait(false);

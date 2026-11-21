@@ -95,6 +95,7 @@ internal static partial class NavigationTools
             var unreachable = new UnreachableMobs();
             XivMcp.Maps.Approach? approach = null;
             ulong? approachFor = null;
+            ulong? flewFor = null;
             bool Usable(ulong id) => !unreachable.IsSkipped(id, DateTime.UtcNow);
             var range = await Game.Run(() => MobFarm.Range((byte)(Svc.Objects.LocalPlayer?.ClassJob.ValueNullable?.Role ?? 3))).ConfigureAwait(false);
             try
@@ -151,13 +152,29 @@ internal static partial class NavigationTools
                                 return (false, (float?)null);
                             }).ConfigureAwait(false);
                             if (autoSent) lastAuto = DateTime.UtcNow;
+                            // Arrived by mount (after flying over an obstacle): get off, nothing can be cast from the saddle.
+                            if (walkingDistance is null && await Game.Run(() => Svc.Condition[ConditionFlag.Mounted]).ConfigureAwait(false))
+                                await GetOffMount(steps, ct).ConfigureAwait(false);
 
                             // Walking up to a monster we don't fight yet but not getting closer (behind trees, a cliff, no line of
                             // sight): give it up for a while and take another one.
                             if (walkingDistance is { } dist && !inCombat && pickedMob is { } walkingTo)
                             {
                                 if (approachFor != walkingTo) { approach = new XivMcp.Maps.Approach(UnreachableMobs.StallWindow); approachFor = walkingTo; }
-                                if (approach!.Stalled(dist, DateTime.UtcNow))
+                                if (approach!.Stalled(dist, DateTime.UtcNow) && flewFor != walkingTo)
+                                {
+                                    // Walking doesn't get there (trees, a cliff): mount up and fly over it, where the zone allows it.
+                                    flewFor = walkingTo;
+                                    approach = new XivMcp.Maps.Approach(UnreachableMobs.StallWindow + UnreachableMobs.StallWindow);
+                                    var flyTo = await Game.Run(() => Svc.Objects.OfType<IBattleNpc>().FirstOrDefault(o => o.GameObjectId == walkingTo)?.Position).ConfigureAwait(false);
+                                    if (flyTo is { } pos)
+                                    {
+                                        await Game.Run(() => { StopMoving(); return true; }).ConfigureAwait(false);
+                                        await StartPath(pos, range, steps, ct, forceMount: true).ConfigureAwait(false);
+                                        steps.Add($"Could not walk up to a {target.Name} {dist:0} yalms away; flying there.");
+                                    }
+                                }
+                                else if (approach.Stalled(dist, DateTime.UtcNow))
                                 {
                                     unreachable.Skip(walkingTo, DateTime.UtcNow);
                                     await Game.Run(() => { StopMoving(); Svc.Targets.Target = null; return true; }).ConfigureAwait(false);
