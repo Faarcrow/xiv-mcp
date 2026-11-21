@@ -77,4 +77,12 @@ public class PlayerGuidanceTests
 
     [Fact]
     public void The_shop_request_names_the_item() => Assert.Contains("Hi-Potion", PlayerGuidance.OpenShop("Hi-Potion"));
+
+    [Theory]
+    [InlineData(131u, 0u, 131u, true)]                                // still in Ul'dah: the plugin ignored the request
+    [InlineData(131u, 0u, 979u, false)]                               // reached Empyreum
+    [InlineData(979u, PlayerGuidance.HousingAreaUse, 979u, false)]    // already in the district
+    [InlineData(980u, PlayerGuidance.HousingInteriorUse, 980u, false)] // already inside the house
+    public void A_property_trip_failed_only_when_it_never_left_a_non_housing_zone(uint start, uint use, uint now, bool failed) =>
+        Assert.Equal(failed, PlayerGuidance.PropertyTripFailed(start, use, now));
 }

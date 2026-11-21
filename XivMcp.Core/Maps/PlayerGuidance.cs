@@ -14,6 +14,16 @@ public static class PlayerGuidance
     /// <summary>TerritoryIntendedUse of housing interiors: houses, chambers, apartments and workshops.</summary>
     public const uint HousingInteriorUse = 14;
 
+    /// <summary>TerritoryIntendedUse of residential districts (Mist, the Goblet, Empyreum, ...).</summary>
+    public const uint HousingAreaUse = 13;
+
+    /// <summary>
+    /// After asking the travel plugin to go to a property: true when the trip evidently didn't happen (still in the zone it started
+    /// in, and that zone isn't housing, where the property may already be or be reached without a zone change).
+    /// </summary>
+    public static bool PropertyTripFailed(uint startTerritory, uint startUse, uint nowTerritory) =>
+        nowTerritory == startTerritory && startUse != HousingAreaUse && startUse != HousingInteriorUse;
+
     public static string WalkTo(string label, string zone, double mapX, double mapY) =>
         $"Walk to {label}: XIV MCP put the flag on your map in {zone} at ({mapX:0.0}, {mapY:0.0}).";
 
