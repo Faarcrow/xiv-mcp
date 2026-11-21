@@ -300,7 +300,8 @@ internal static class QuestionableTools
                 }).ConfigureAwait(false);
 
                 var ids = batch.Select(q => q.QuestionableId).ToHashSet();
-                DateTime? stoppedSince = null, elsewhereSince = null;
+                DateTime? elsewhereSince = null;
+                var stopped = new QuestionableStop(MaxRestarts);
                 var stall = new StallWatch(StallLimit);
                 // A quest counts as done only when the game's quest state says so on two checks in a row.
                 var turnedIn = new SteadyReading<uint?>(2);
@@ -342,10 +343,8 @@ internal static class QuestionableTools
                         await StopAfterFight(ct).ConfigureAwait(false);
                         await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
                         await Game.Run(() => Ipc<string, bool>("StartQuest", again)).ConfigureAwait(false);
-                        stoppedSince = null;
                         continue;
                     }
-                    stoppedSince = s.Running ? null : stoppedSince ?? DateTime.UtcNow;
                     // vnavmesh found no path (in the air, say): from where the character is once landed, it usually does.
                     if (!s.Running && chat.Last is { } failed && QuestionableMessage.NavigationFailed(failed) && restarts < MaxRestarts)
                     {
@@ -358,10 +357,19 @@ internal static class QuestionableTools
                             await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
                         await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
                         await Game.Run(() => Ipc<string, bool>("StartQuest", again)).ConfigureAwait(false);
-                        stoppedSince = null;
                         continue;
                     }
-                    if (DateTime.UtcNow - stoppedSince > TimeSpan.FromSeconds(10))
+                    // Questionable often stops by itself after a craft, a cutscene or a dialogue choice although the quest goes on.
+                    var verdict = stopped.Next(DateTime.UtcNow, s.Running, s.Busy);
+                    if (verdict == QuestionableStopAction.Restart)
+                    {
+                        var again = s.Current is { Length: > 0 } cur && ids.Contains(cur) ? cur : first.QuestionableId;
+                        Svc.Log.Information($"[MCP] Questionable stopped by itself; starting it again on quest {again}.");
+                        await Game.Run(() => Ipc<string, bool>("StartQuest", again)).ConfigureAwait(false);
+                        stall = new StallWatch(StallLimit);
+                        continue;
+                    }
+                    if (verdict == QuestionableStopAction.Fail)
                         throw new ToolException($"Questionable stopped on its own while on {first.Name}." + (chat.Said is { Length: > 0 } why ? why : " Its window says why (a duty, a level, a step it cannot do)."));
                     elsewhereSince = s.Current is { Length: > 0 } c && !ids.Contains(c) ? elsewhereSince ?? DateTime.UtcNow : null;
                     if (DateTime.UtcNow - elsewhereSince > TimeSpan.FromSeconds(30))

@@ -218,6 +218,55 @@ public class StallWatchTests
     }
 }
 
+public class QuestionableStopTests
+{
+    private static readonly System.DateTime T0 = new(2026, 11, 21, 18, 0, 0, System.DateTimeKind.Utc);
+
+    [Fact]
+    public void Running_or_a_short_pause_is_fine()
+    {
+        var stop = new QuestionableStop(maxRestarts: 2);
+        Assert.Equal(QuestionableStopAction.Continue, stop.Next(T0, running: true, busy: false));
+        Assert.Equal(QuestionableStopAction.Continue, stop.Next(T0, running: false, busy: false));
+        Assert.Equal(QuestionableStopAction.Continue, stop.Next(T0.AddSeconds(8), running: false, busy: false));
+    }
+
+    [Fact]
+    public void A_cutscene_or_craft_does_not_count_as_stopped()
+    {
+        var stop = new QuestionableStop(maxRestarts: 2);
+        stop.Next(T0, running: false, busy: true);
+        Assert.Equal(QuestionableStopAction.Continue, stop.Next(T0.AddSeconds(60), running: false, busy: true));
+        // The 10 seconds count from the end of the cutscene.
+        Assert.Equal(QuestionableStopAction.Continue, stop.Next(T0.AddSeconds(65), running: false, busy: false));
+        Assert.Equal(QuestionableStopAction.Restart, stop.Next(T0.AddSeconds(76), running: false, busy: false));
+    }
+
+    [Fact]
+    public void Stopped_for_good_is_restarted_a_few_times_then_fails()
+    {
+        var stop = new QuestionableStop(maxRestarts: 2);
+        stop.Next(T0, running: false, busy: false);
+        Assert.Equal(QuestionableStopAction.Restart, stop.Next(T0.AddSeconds(11), running: false, busy: false));
+        stop.Next(T0.AddSeconds(12), running: false, busy: false);
+        Assert.Equal(QuestionableStopAction.Restart, stop.Next(T0.AddSeconds(23), running: false, busy: false));
+        stop.Next(T0.AddSeconds(24), running: false, busy: false);
+        Assert.Equal(QuestionableStopAction.Fail, stop.Next(T0.AddSeconds(35), running: false, busy: false));
+    }
+
+    [Fact]
+    public void Running_again_for_a_while_gives_the_restarts_back()
+    {
+        var stop = new QuestionableStop(maxRestarts: 1);
+        stop.Next(T0, running: false, busy: false);
+        Assert.Equal(QuestionableStopAction.Restart, stop.Next(T0.AddSeconds(11), running: false, busy: false));
+        stop.Next(T0.AddSeconds(12), running: true, busy: false);
+        stop.Next(T0.AddSeconds(200), running: true, busy: false);
+        stop.Next(T0.AddSeconds(201), running: false, busy: false);
+        Assert.Equal(QuestionableStopAction.Restart, stop.Next(T0.AddSeconds(212), running: false, busy: false));
+    }
+}
+
 public class QuestionableMessageTests
 {
     [Fact]

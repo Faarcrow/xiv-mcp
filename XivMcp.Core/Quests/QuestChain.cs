@@ -208,6 +208,42 @@ public sealed class StallWatch(TimeSpan limit, float distance = 2f)
     }
 }
 
+public enum QuestionableStopAction { Continue, Restart, Fail }
+
+/// <summary>
+/// Questionable often stops by itself after a step it hands off (a craft through Artisan, a cutscene, a dialogue choice) although
+/// the quest goes on. Stopped for 10 seconds while the character is free: start it again, a few times; running again for
+/// 2 minutes gives the restarts back. Time in a cutscene or craft doesn't count.
+/// </summary>
+public sealed class QuestionableStop(int maxRestarts)
+{
+    public static readonly TimeSpan Grace = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan Recovered = TimeSpan.FromMinutes(2);
+    private DateTime? stoppedSince, runningSince;
+    private int restarts;
+
+    public QuestionableStopAction Next(DateTime now, bool running, bool busy)
+    {
+        if (running)
+        {
+            stoppedSince = null;
+            runningSince ??= now;
+            if (now - runningSince >= Recovered) restarts = 0;
+            return QuestionableStopAction.Continue;
+        }
+        runningSince = null;
+        if (busy)
+        {
+            stoppedSince = null;
+            return QuestionableStopAction.Continue;
+        }
+        stoppedSince ??= now;
+        if (now - stoppedSince <= Grace) return QuestionableStopAction.Continue;
+        stoppedSince = null;
+        return restarts++ < maxRestarts ? QuestionableStopAction.Restart : QuestionableStopAction.Fail;
+    }
+}
+
 /// <summary>What Questionable prints in chat, tagged "[QST v…]": why it stopped or what it waits for.</summary>
 public static class QuestionableMessage
 {
