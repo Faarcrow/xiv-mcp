@@ -103,6 +103,9 @@ internal static partial class NavigationTools
                 while (true)
                 {
                     ct.ThrowIfCancellationRequested();
+                    // No player for a moment is a zone load; for a minute it is a lost connection (Look then fails as logged out).
+                    for (var gone = 0; gone < 60 && await Game.Run(() => Svc.Objects.LocalPlayer is null).ConfigureAwait(false); gone++)
+                        await Task.Delay(1000, ct).ConfigureAwait(false);
                     var view = await Game.Run(() => Look(target.NameId, spawn, fighting, item.RowId, Usable)).ConfigureAwait(false);
                     if (view.Have != have) { have = view.Have; progressAt = DateTime.UtcNow; }
                     if (fighting is not null && !view.FightingAlive) { kills++; fighting = null; progressAt = DateTime.UtcNow; }
@@ -263,13 +266,16 @@ internal static partial class NavigationTools
     /// <summary>What the farm loop needs to decide. Framework thread.</summary>
     private static FarmView Look(uint nameId, Vector3 spawn, ulong? fighting, uint itemId, Func<ulong, bool> usable)
     {
-        var p = Svc.Objects.LocalPlayer;
-        var hp = p is { MaxHp: > 0 } ? 100.0 * p.CurrentHp / p.MaxHp : 0;
+        // No player at all is a lost connection or a zone change, not a death (and the bags then read empty): fail as logged
+        // out, which a job retries once the character is back.
+        var p = Svc.Objects.LocalPlayer
+                ?? throw new ToolException("No character is currently logged in (the connection may have been lost) while farming.");
+        var hp = p.MaxHp > 0 ? 100.0 * p.CurrentHp / p.MaxHp : 0;
         var alive = fighting is { } id && Svc.Objects.FirstOrDefault(o => o.GameObjectId == id) is IBattleNpc b && !b.IsDead && b.CurrentHp > 0;
         var nearest = NearestMob(nameId, usable);
-        return new FarmView(Items.CountInBags(itemId), hp, p is null || p.IsDead, Svc.Condition[ConditionFlag.InCombat], alive,
+        return new FarmView(Items.CountInBags(itemId), hp, p.IsDead, Svc.Condition[ConditionFlag.InCombat], alive,
             nearest is null ? null : Game.DistanceToPlayer(nearest.Position),
-            p is null ? 0 : Vector2.Distance(new(p.Position.X, p.Position.Z), new(spawn.X, spawn.Z)));
+            Vector2.Distance(new(p.Position.X, p.Position.Z), new(spawn.X, spawn.Z)));
     }
 
     /// <summary>The nearest reachable mesh point at a map position (no height), searching wider and higher step by step. Framework thread.</summary>
