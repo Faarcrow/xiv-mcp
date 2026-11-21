@@ -102,7 +102,7 @@ public static class ToolSummaries
         ["sort_inventory"] = "Sorts your bags, armoury, saddlebag or a retainer inventory with the game's own sorting.",
         ["move_items"] = "Moves items between your bags, armoury, saddlebag, retainers and chest, one at a time.",
         ["open_retainer"] = "Calls a retainer at the summoning bell.",
-        ["close_retainer"] = "Dismisses the retainer you are talking to.",
+        ["close_retainer"] = "Dismisses the retainer you are talking to. Asks you first if it can still buy back what it sold.",
         ["transfer_retainer_items"] = "Moves stacks of items between your retainers and your bags.",
         ["refresh_retainer_inventories"] = "Calls each retainer once at a summoning bell next to you, so XIV MCP knows what they hold.",
         ["assign_venture"] = "Sends a retainer on a venture. Costs venture tokens.",

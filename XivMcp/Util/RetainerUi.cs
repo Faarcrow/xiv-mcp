@@ -103,7 +103,7 @@ internal static class RetainerUi
     /// a vendor for you can buy them back only until it is dismissed, and the game asks before dismissing it: the player is asked
     /// in game first, and if they decline, the retainer stays open and this throws.
     /// </summary>
-    public static async Task Close(CancellationToken ct)
+    public static async Task Close(CancellationToken ct, Permissions.Caller? caller = null)
     {
         var state = new StepState();
         var deadline = DateTime.UtcNow.AddSeconds(20);
@@ -119,11 +119,12 @@ internal static class RetainerUi
                      "Once the retainer is dismissed, they can no longer be bought back."])
                 {
                     Deadline = DateTime.UtcNow + BuybackConsentTimeout,
+                    Source = caller?.Name ?? "your AI assistant",
                     Warning = "Can't be undone.",
                     Risk = Permissions.RiskLevel.High,
                     OfferSession = true,
                 };
-                if (!await Consent.AskOrSession("retainer:discard_buyback", request, BuybackConsentTimeout, ct).ConfigureAwait(false))
+                if (!await Consent.AskOrSession("retainer:discard_buyback", caller, request, BuybackConsentTimeout, ct).ConfigureAwait(false))
                     throw new ToolException($"{retainer} still holds items it sold for you, which can be bought back (\"Item buyback\" in its menu) " +
                                             "only until it is dismissed, and the player did not approve dismissing it in game. The retainer stays open.");
                 state.DiscardBuyback = true;
@@ -134,6 +135,15 @@ internal static class RetainerUi
     }
 
     private static readonly TimeSpan BuybackConsentTimeout = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// "Your retainer will be unable to process item buyback requests once recalled. Are you sure you wish to proceed?", from the
+    /// retainer's dialogue sheets (ASK_RETURN_WITH_BUYBACK; the bell's copy reads the same).
+    /// </summary>
+    private static IEnumerable<string> QuitWithBuybackPrompts =>
+        new[] { ("custom/000/CmnDefRetainerCall_00010", 215u), ("custom/005/CmnDefRetainerBell_00544", 52u) }
+            .Select(r => Svc.Data.GetExcelSheet<Tools.QuestDialogueText>(name: r.Item1)?.GetRowOrDefault(r.Item2)?.Value.ExtractText())
+            .OfType<string>().Where(t => t.Length > 0);
 
     private sealed class StepState
     {
@@ -212,8 +222,10 @@ internal static class RetainerUi
         }
         else if (state.QuitWithBuyback && Ready("SelectYesno"))
         {
-            // "Your retainer will be unable to process item buyback requests once recalled. Are you sure you wish to proceed?"
-            Fire(Addon("SelectYesno"), true, 0);
+            var prompt = GameWindows.YesNoPrompt() ?? "";
+            var expected = QuitWithBuybackPrompts.Any(p => Ui.PromptTemplate.Matches(prompt, [p]));
+            Fire(Addon("SelectYesno"), true, expected ? 0 : 1);
+            if (!expected) throw new ToolException($"Quitting the retainer showed an unexpected prompt: \"{prompt}\". It was answered No.");
             state.Acted();
         }
         else if (Ready("SelectString"))

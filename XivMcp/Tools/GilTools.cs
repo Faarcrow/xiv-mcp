@@ -60,21 +60,21 @@ internal static class GilTools
                 {
                     return chest
                         ? await Chest(deposit, amountText, ct).ConfigureAwait(false)
-                        : await Retainer(deposit, amountText, args.String("retainer"), compat, ct).ConfigureAwait(false);
+                        : await Retainer(deposit, amountText, args.String("retainer"), compat, args.Caller, ct).ConfigureAwait(false);
                 }
                 finally { InventoryActionTools.Gate.Release(); }
             },
         };
     }
 
-    private static async Task<object> Retainer(bool deposit, string amountText, string? name, PluginCompat compat, CancellationToken ct)
+    private static async Task<object> Retainer(bool deposit, string amountText, string? name, PluginCompat compat, Permissions.Caller? caller, CancellationToken ct)
     {
         await Game.RunLoggedIn(() => { InventoryActionTools.EnsureNotBusy(); compat.AcquireBell(); return true; }).ConfigureAwait(false);
         var active = await Game.Run(() => RetainerUi.ActiveRetainerName).ConfigureAwait(false);
         name ??= active ?? throw new ToolException("No retainer is open. Name one with 'retainer' (at a summoning bell).");
         // The gil entry is in the retainer's menu: go back to it if its inventory is open, or open the retainer.
         if (active is not null && (!active.Equals(name, StringComparison.OrdinalIgnoreCase) || !await Game.Run(() => RetainerUi.Ready("SelectString")).ConfigureAwait(false)))
-            await RetainerUi.Close(ct).ConfigureAwait(false);
+            await RetainerUi.Close(ct, caller).ConfigureAwait(false);
         if (!await Game.Run(() => RetainerUi.Ready("SelectString") && RetainerUi.ActiveRetainerName is not null).ConfigureAwait(false))
             await RetainerUi.OpenMenu(name, ct).ConfigureAwait(false);
         var retainer = await Game.Run(() => RetainerUi.ActiveRetainerName).ConfigureAwait(false) ?? name;

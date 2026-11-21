@@ -124,8 +124,7 @@ internal static class RetainerTools
                           "plugin resumes then). A retainer that sold items to a vendor for you (sell_to_vendor) can buy them back only until it is " +
                           "dismissed: the player is asked in game first, and if they decline, the retainer stays open. Requires 'Items & retainers' in /xivmcp.",
             InputSchema = """
-                { "type": "object", "properties": {
-                    "close_list": { "type": "boolean", "description": "Also close the retainer list / leave the bell (default false)." } } }
+                { "type": "object", "properties": { "close_list": { "type": "boolean", "description": "Also close the retainer list / leave the bell (default false)." } } }
                 """,
             ReadOnly = false,
             Handler = async (args, ct) =>
@@ -135,7 +134,7 @@ internal static class RetainerTools
                 try
                 {
                     var name = await Svc.Framework.RunOnFrameworkThread(() => RetainerUi.ActiveRetainerName).ConfigureAwait(false);
-                    await RetainerUi.Close(ct).ConfigureAwait(false);
+                    await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
                     var closeList = args.Bool("close_list", false);
                     if (closeList) await RetainerUi.CloseList(ct).ConfigureAwait(false);
                     return new { closed = name, retainerListClosed = closeList };
@@ -204,7 +203,7 @@ internal static class RetainerTools
                         results.Add(result);
                         if (!result.Ok) break;
                     }
-                    if (closeWhenDone) await RetainerUi.Close(ct).ConfigureAwait(false);
+                    if (closeWhenDone) await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
                     return new { completed = results.Cast<TransferResult>().Count(r => r.Ok), requested = transfers.Count, results };
                 }
                 finally { InventoryActionTools.Gate.Release(); }
@@ -287,12 +286,12 @@ internal static class RetainerTools
                                 .FirstOrDefault(r => r.Name == name)?.InventoryCapturedUtc > started, TimeSpan.FromSeconds(6), ct).ConfigureAwait(false);
                             var snap = tracker.Get(Svc.PlayerState.ContentId)?.Retainers.FirstOrDefault(r => r.Name == name);
                             results.Add(new RefreshResult(name, captured, snap?.Items.Count, snap?.Market.Count, null));
-                            await RetainerUi.Close(ct).ConfigureAwait(false);
+                            await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
                         }
                         catch (ToolException ex)
                         {
                             results.Add(new RefreshResult(name, false, null, null, ex.Message));
-                            try { await RetainerUi.Close(ct).ConfigureAwait(false); } catch (ToolException) { /* report the original problem */ }
+                            try { await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false); } catch (ToolException) { /* report the original problem */ }
                             break;
                         }
                         await Task.Delay(config.NextMoveDelay(), ct).ConfigureAwait(false);

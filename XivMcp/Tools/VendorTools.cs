@@ -87,21 +87,25 @@ internal static class VendorTools
                         if (!CanSell()) throw new ToolException("No shop or retainer inventory is open. Talk to a merchant and open its shop first (navigate_to destination npc or object), or open a retainer at a summoning bell (open_retainer), then sell.");
                         return wanted.Select(w => (Item: Items.Resolve(w.Query), w.Quantity, w.Keep)).ToList();
                     }).ConfigureAwait(false);
-                    var untradableApproved = await ApproveUntradable(resolved.Select(r => r.Item), ct).ConfigureAwait(false);
-                    var gilBefore = await Game.Run(Gil).ConfigureAwait(false);
-                    var results = new List<object>();
+                    var plans = new List<(Lumina.Excel.Sheets.Item Item, List<Stack> Stacks, IReadOnlyList<int> Pick)>();
                     foreach (var (item, quantity, keep) in resolved)
                     {
+                        var stacks = await Game.Run(() => StacksOf(item.RowId)).ConfigureAwait(false);
+                        try { plans.Add((item, stacks, VendorSale.Pick(stacks.Select(s => s.Quantity).ToList(), quantity, keep))); }
+                        catch (ArgumentOutOfRangeException e) { throw new ToolException($"{item.Name.ExtractText()}: {e.Message}"); }
+                    }
+                    // Only what would really be sold is asked about.
+                    var untradableApproved = await ApproveUntradable(plans.Where(p => p.Pick.Count > 0).Select(p => p.Item), args.Caller, ct).ConfigureAwait(false);
+                    var gilBefore = await Game.Run(Gil).ConfigureAwait(false);
+                    var results = new List<object>();
+                    foreach (var (item, stacks, pick) in plans)
+                    {
                         var name = item.Name.ExtractText();
-                        if (item.IsUntradable && item.PriceLow > 0 && !untradableApproved)
+                        if (item.IsUntradable && item.PriceLow > 0 && pick.Count > 0 && !untradableApproved)
                         {
                             results.Add(new { item = name, sold = 0, note = "Untradable: the player did not approve selling it in game, so it was left alone." });
                             continue;
                         }
-                        var stacks = await Game.Run(() => StacksOf(item.RowId)).ConfigureAwait(false);
-                        IReadOnlyList<int> pick;
-                        try { pick = VendorSale.Pick(stacks.Select(s => s.Quantity).ToList(), quantity, keep); }
-                        catch (ArgumentOutOfRangeException e) { throw new ToolException($"{name}: {e.Message}"); }
                         if (item.PriceLow == 0)
                         {
                             results.Add(new { item = name, sold = 0, note = "Vendors do not buy this item." });
@@ -144,7 +148,7 @@ internal static class VendorTools
     /// Asks the player in game once whether the untradable items of this call may be sold: once gone (and no longer in a buyback
     /// list), they can't be bought from other players again. True when there are none to ask about.
     /// </summary>
-    private static async Task<bool> ApproveUntradable(IEnumerable<Lumina.Excel.Sheets.Item> items, CancellationToken ct)
+    private static async Task<bool> ApproveUntradable(IEnumerable<Lumina.Excel.Sheets.Item> items, Permissions.Caller? caller, CancellationToken ct)
     {
         var untradable = items.Where(i => i.IsUntradable && i.PriceLow > 0).Select(i => i.Name.ExtractText()).Distinct().ToList();
         if (untradable.Count == 0) return true;
@@ -153,11 +157,12 @@ internal static class VendorTools
         var request = new Consent.Request(untradable.Count == 1 ? $"Sell {untradable[0]}?" : $"Sell {untradable.Count} untradable items?", details)
         {
             Deadline = DateTime.UtcNow + ConsentTimeout,
+            Source = caller?.Name ?? "your AI assistant",
             Warning = "Untradable items can't be bought from other players again.",
             Risk = Permissions.RiskLevel.High,
             OfferSession = true,
         };
-        return await Consent.AskOrSession("sell_to_vendor:untradable", request, ConsentTimeout, ct).ConfigureAwait(false);
+        return await Consent.AskOrSession("sell_to_vendor:untradable", caller, request, ConsentTimeout, ct).ConfigureAwait(false);
     }
 
     /// <summary>Sells one stack: its context menu, "Sell", the confirmation if the game asks; waits until it is gone from the bag.</summary>

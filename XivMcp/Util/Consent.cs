@@ -89,10 +89,12 @@ internal static class Consent
 
     /// <summary>
     /// Asks like <see cref="Ask"/>, offering "Approve for this session": once the player picks that, later questions with the same
-    /// <paramref name="key"/> are approved without asking until the game or XIV MCP restarts. True when approved.
+    /// <paramref name="key"/> from the same caller are approved without asking until the game or XIV MCP restarts (the assistant's
+    /// answer never covers a plugin, or the other way round). True when approved.
     /// </summary>
-    public static async Task<bool> AskOrSession(string key, Request request, TimeSpan timeout, CancellationToken ct)
+    public static async Task<bool> AskOrSession(string key, Caller? caller, Request request, TimeSpan timeout, CancellationToken ct)
     {
+        key = $"{caller?.ApprovalOwner ?? "assistant"}|{key}";
         lock (Sync)
             if (ApprovedForSession.Contains(key)) return true;
         var answer = await Ask(request, timeout, ct).ConfigureAwait(false);
