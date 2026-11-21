@@ -595,7 +595,7 @@ internal static class QuestionableTools
     /// </summary>
     private static unsafe string? CraftStepDone(object step, string? type)
     {
-        if (type != XivMcp.Quests.CraftStep.Craft) return null;
+        if (!XivMcp.Quests.CraftStep.Covers(type)) return null;
         var itemId = step.GetType().GetProperty("ItemId", Any)?.GetValue(step) as uint?;
         var count = step.GetType().GetProperty("ItemCount", Any)?.GetValue(step) as int?;
         var quality = step.GetType().GetProperty("ItemQuality", Any)?.GetValue(step)?.ToString();
@@ -604,9 +604,11 @@ internal static class QuestionableTools
         var nq = im->GetInventoryItemCount(id, false, false);
         var hq = im->GetInventoryItemCount(id, true, false);
         if (!XivMcp.Quests.CraftStep.IsDone(type, count, nq, hq, quality)) return null;
-        if (CraftGatherTools.Ipc("Artisan.IsListRunning") == true || CraftGatherTools.Ipc("Artisan.IsBusy") == true)
+        if (type == XivMcp.Quests.CraftStep.Craft &&
+            (CraftGatherTools.Ipc("Artisan.IsListRunning") == true || CraftGatherTools.Ipc("Artisan.IsBusy") == true))
             CraftGatherTools.StopArtisan();
-        return $"Questionable's craft step for {count}x {Items.Name(id)} was skipped: the bags already hold {nq + hq}.";
+        var what = type == XivMcp.Quests.CraftStep.Craft ? "craft" : "purchase";
+        return $"Questionable's {what} step for {count}x {Items.Name(id)} was skipped: the bags already hold {nq + hq}.";
     }
 
     /// <summary>Whether a piece of gear of that name (bags, armoury, worn) has materia melded. Framework thread.</summary>
