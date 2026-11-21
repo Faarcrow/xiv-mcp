@@ -364,6 +364,8 @@ internal sealed class JobManager : IDisposable, ICache
             {
                 if (!tools.TryGet(step.Tool, out var stepTool)) throw new ToolException($"The tool '{step.Tool}' no longer exists (its plugin was unloaded or unregistered it).");
                 if (!stepTool.IsAvailable) throw new ToolException($"'{step.Tool}' is not available right now (the plugin it needs is not loaded or not allowed).");
+                // A step that acts in game right after travel would find the zone still loading: let it finish first.
+                if (!runningPassive) await WaitWhileLoading(stepCts.Token).ConfigureAwait(false);
                 result = await gate.InvokeAsync(stepTool, new ToolArgs(args), stepCts.Token, inJob: true, caller: CallerOf(job)).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { interrupted = true; }
@@ -372,6 +374,14 @@ internal sealed class JobManager : IDisposable, ICache
 
             // A step that failed or was stopped can leave the character in a conversation or window that blocks everything after it.
             var recovery = (error is not null || interrupted) && !runningPassive && !shutdown.IsCancellationRequested ? await Recover().ConfigureAwait(false) : null;
+
+            // Failures that only mean the game was briefly busy (still loading after travel, the market board not answering) are run again.
+            var autoRetry = error is not null && !interrupted && XivMcp.Jobs.StepRetry.ShouldRetry(error, step.Attempts);
+            if (autoRetry)
+            {
+                try { await Task.Delay(XivMcp.Jobs.StepRetry.Delay, shutdown.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) { return; }
+            }
 
             lock (sync)
             {
@@ -385,6 +395,13 @@ internal sealed class JobManager : IDisposable, ICache
                     step.State = StepState.Interrupted;
                     AddLog(job, $"Step {step.Id} interrupted ({job.State.ToString().ToLowerInvariant()}).");
                     if (job.State == JobState.Running) { job.State = JobState.Paused; job.Reason = "Interrupted."; }
+                }
+                else if (error is not null && autoRetry && job.State == JobState.Running)
+                {
+                    step.State = StepState.Queued;
+                    step.Error = error;
+                    AddLog(job, $"Step {step.Id} failed ({error}); trying again by itself (attempt {step.Attempts + 1}).");
+                    job.State = JobState.Queued;
                 }
                 else if (error is not null)
                 {
@@ -403,6 +420,17 @@ internal sealed class JobManager : IDisposable, ICache
             }
             wake.Release();
         }
+    }
+
+    /// <summary>Waits (up to 90 s) while the character is between zones or worlds.</summary>
+    private static async Task WaitWhileLoading(CancellationToken ct)
+    {
+        var until = DateTime.UtcNow.AddSeconds(90);
+        while (DateTime.UtcNow < until && await Game.Run(() =>
+                   Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.BetweenAreas] ||
+                   Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.BetweenAreas51] ||
+                   !Svc.ClientState.IsLoggedIn).ConfigureAwait(false))
+            await Task.Delay(500, ct).ConfigureAwait(false);
     }
 
     private async Task<Recovery.Result?> Recover()
