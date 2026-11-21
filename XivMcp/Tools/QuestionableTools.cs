@@ -550,21 +550,48 @@ internal static class QuestionableTools
             if (step is null) return null;
             var type = step.GetType().GetProperty("InteractionType", Any)?.GetValue(step)?.ToString();
             var comment = step.GetType().GetProperty("Comment", Any)?.GetValue(step) as string;
-            if (XivMcp.Quests.ManualStep.MeldItem(type, comment) is not { } itemName) return null;
             var questId = quest.GetType().GetProperty("Id", Any)?.GetValue(quest);
             var key = $"{questId}/{sequence}/{stepIndex}";
-            if (key == lastSkippedStep || !HasMelded(itemName)) return null;
+            if (key == lastSkippedStep || questId is null) return null;
+            string done;
+            if (XivMcp.Quests.ManualStep.MeldItem(type, comment) is { } itemName)
+            {
+                if (!HasMelded(itemName)) return null;
+                done = $"Questionable waited for \"{comment}\"; {itemName} already carries materia, so its step was skipped.";
+            }
+            else if (CraftStepDone(step, type) is { } crafted) done = crafted;
+            else return null;
             var skip = controller.GetType().GetMethods(Any).FirstOrDefault(m => m.Name == "Skip" && m.GetParameters().Length == 2);
-            if (skip is null || questId is null) return null;
+            if (skip is null) return null;
             skip.Invoke(controller, [questId, sequence.Value]);
             lastSkippedStep = key;
-            return $"Questionable waited for \"{comment}\"; {itemName} already carries materia, so its step was skipped.";
+            return done;
         }
         catch (Exception e)
         {
             Svc.Log.Debug($"[MCP] Checking Questionable's manual step failed: {e.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// A "Craft" step whose items are already in the bags: stops the Artisan list Questionable started for it (it would craft the
+    /// quest's items again) and returns what to log; null when the step still needs crafting. Framework thread.
+    /// </summary>
+    private static unsafe string? CraftStepDone(object step, string? type)
+    {
+        if (type != XivMcp.Quests.CraftStep.Craft) return null;
+        var itemId = step.GetType().GetProperty("ItemId", Any)?.GetValue(step) as uint?;
+        var count = step.GetType().GetProperty("ItemCount", Any)?.GetValue(step) as int?;
+        var quality = step.GetType().GetProperty("ItemQuality", Any)?.GetValue(step)?.ToString();
+        if (itemId is not { } id || id == 0) return null;
+        var im = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        var nq = im->GetInventoryItemCount(id, false, false);
+        var hq = im->GetInventoryItemCount(id, true, false);
+        if (!XivMcp.Quests.CraftStep.IsDone(type, count, nq, hq, quality)) return null;
+        if (CraftGatherTools.Ipc("Artisan.IsListRunning") == true || CraftGatherTools.Ipc("Artisan.IsBusy") == true)
+            CraftGatherTools.StopArtisan();
+        return $"Questionable's craft step for {count}x {Items.Name(id)} was skipped: the bags already hold {nq + hq}.";
     }
 
     /// <summary>Whether a piece of gear of that name (bags, armoury, worn) has materia melded. Framework thread.</summary>
