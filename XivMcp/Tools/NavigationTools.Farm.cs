@@ -138,8 +138,11 @@ internal static partial class NavigationTools
                             }).ConfigureAwait(false);
                             break;
                         case MobFarmAction.Fight:
-                            var pickedMob = fighting;
                             var inCombat = view.InCombat;
+                            // Attacked by something else while the picked monster is gone (an add, a wanderer): fight that one.
+                            if (inCombat && !view.FightingAlive && await Game.Run(Attacker).ConfigureAwait(false) is { } attacker)
+                                fighting = attacker;
+                            var pickedMob = fighting;
                             var sendAuto = DateTime.UtcNow - lastAuto > TimeSpan.FromSeconds(3);
                             var (autoSent, walkingDistance, inRange) = await Game.Run(() =>
                             {
@@ -147,7 +150,12 @@ internal static partial class NavigationTools
                                 // while walking there, and fall back to the current target once a fight is on.
                                 var mob = pickedMob is { } id ? Svc.Objects.OfType<IBattleNpc>().FirstOrDefault(o => o.GameObjectId == id) : null;
                                 var t = mob ?? Svc.Targets.Target;
-                                if (t is null) return (false, (float?)null, false);
+                                if (t is null)
+                                {
+                                    // In combat with nothing to target: keep RotationSolver on so it answers whatever attacks.
+                                    if (inCombat && sendAuto) { Svc.Commands.ProcessCommand("/rotation Auto"); return (true, (float?)null, false); }
+                                    return (false, (float?)null, false);
+                                }
                                 if (mob is not null && Svc.Targets.Target?.GameObjectId != mob.GameObjectId) Svc.Targets.Target = mob;
                                 if (Game.DistanceToPlayer(t.Position) is { } d && d > range + t.HitboxRadius)
                                 {
@@ -157,9 +165,9 @@ internal static partial class NavigationTools
                                 }
                                 if (PathRunning) StopMoving();
                                 var here = Game.DistanceToPlayer(t.Position);
-                                // RotationSolver switches itself off after a fight, so the next monster is never attacked: in range
-                                // and not fighting yet, switch it on again (every few seconds, not every tick).
-                                if (!inCombat && sendAuto) { Svc.Commands.ProcessCommand("/rotation Auto"); return (true, here, true); }
+                                // RotationSolver switches itself off after a fight, so the next monster (or one that attacks right after
+                                // a kill) is never answered: in range, switch it on again every few seconds, in combat or not.
+                                if (sendAuto) { Svc.Commands.ProcessCommand("/rotation Auto"); return (true, here, true); }
                                 return (false, here, true);
                             }).ConfigureAwait(false);
                             if (autoSent) lastAuto = DateTime.UtcNow;
@@ -300,6 +308,18 @@ internal static partial class NavigationTools
             if (Ipc<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPointReachable", position with { Y = PlayerHeight() }, radius, height) is { } p)
                 return p;
         return null;
+    }
+
+    /// <summary>The nearest monster that attacks the character (has it targeted), targeted for the fight; null when none. Framework thread.</summary>
+    private static ulong? Attacker()
+    {
+        var me = Svc.Objects.LocalPlayer;
+        if (me is null) return null;
+        var mobs = Svc.Objects.OfType<IBattleNpc>().Where(o => o.IsTargetable).ToList();
+        var id = XivMcp.Farming.Defense.Attacker(mobs.Select(o => new XivMcp.Farming.NearbyMonster(
+            o.GameObjectId, Game.DistanceToPlayer(o.Position) ?? float.MaxValue, o.TargetObjectId == me.GameObjectId, !o.IsDead && o.CurrentHp > 0)));
+        if (id is { } found && mobs.FirstOrDefault(o => o.GameObjectId == found) is { } mob) Svc.Targets.Target = mob;
+        return id;
     }
 
     /// <summary>The nearest living, targetable monster of the kind. Framework thread.</summary>
