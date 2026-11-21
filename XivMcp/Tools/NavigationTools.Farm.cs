@@ -117,7 +117,7 @@ internal static partial class NavigationTools
                             throw new ToolException($"{decision.Reason} {view.Have}/{wanted} {item.Name.ExtractText()} after {kills} kill(s).");
                         case MobFarmAction.Engage:
                             if (await Game.Run(() => Svc.Condition[ConditionFlag.Mounted]).ConfigureAwait(false))
-                                await GetOffMount(steps, ct).ConfigureAwait(false);
+                                if (!await TryGetOff(spawn, steps, ct).ConfigureAwait(false)) break;
                             fighting = await Game.Run(() =>
                             {
                                 var mob = NearestMob(target.NameId, Usable);
@@ -154,7 +154,7 @@ internal static partial class NavigationTools
                             if (autoSent) lastAuto = DateTime.UtcNow;
                             // Arrived by mount (after flying over an obstacle): get off, nothing can be cast from the saddle.
                             if (walkingDistance is null && await Game.Run(() => Svc.Condition[ConditionFlag.Mounted]).ConfigureAwait(false))
-                                await GetOffMount(steps, ct).ConfigureAwait(false);
+                                await TryGetOff(spawn, steps, ct).ConfigureAwait(false);
 
                             // Walking up to a monster we don't fight yet but not getting closer (behind trees, a cliff, no line of
                             // sight): give it up for a while and take another one.
@@ -209,6 +209,23 @@ internal static partial class NavigationTools
             }
         },
     };
+
+    /// <summary>
+    /// Gets off the mount; where the ground below can't be landed on (water, a steep slope), flies a bit towards the spawn area's
+    /// ground instead and returns false, so the next tick tries again from there rather than ending the farm.
+    /// </summary>
+    private static async Task<bool> TryGetOff(Vector3 spawn, List<string> steps, CancellationToken ct)
+    {
+        try { await GetOffMount(steps, ct).ConfigureAwait(false); return true; }
+        catch (ToolException)
+        {
+            await Game.Run(() => { MoveCloseTo(spawn, 5f, Svc.Condition[ConditionFlag.InFlight]); return true; }).ConfigureAwait(false);
+            await Task.Delay(2500, ct).ConfigureAwait(false);
+            await Game.Run(() => { StopMoving(); return true; }).ConfigureAwait(false);
+            steps.Add("Could not land here; moved towards the spawn area's ground.");
+            return false;
+        }
+    }
 
     private sealed record DropTarget(string Name, uint NameId, NpcSpot Spot);
 
