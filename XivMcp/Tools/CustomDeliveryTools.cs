@@ -204,6 +204,15 @@ internal static class CustomDeliveryTools
         var actions = new List<string>();
         while (true)
         {
+            // After a rank-up the client's cutscene ends in the rewards window, which waits for Accept while the game still counts
+            // the character as watching the cutscene, so recovery alone would wait for it forever.
+            if (await Game.Run(AcceptRankUp).ConfigureAwait(false))
+            {
+                actions.Add("Accepted the rank-up rewards.");
+                watch.BlockedTooLong(false, DateTime.UtcNow);
+                await Task.Delay(1500, ct).ConfigureAwait(false);
+                continue;
+            }
             var freed = await Recovery.Run(ct).ConfigureAwait(false);
             actions.AddRange(freed.Actions);
             // Dialogue clicked through in the client's cutscene is progress: only a cutscene that stands still for long gives up.
