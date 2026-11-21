@@ -151,19 +151,30 @@ internal static partial class NavigationTools
                     return;
                 }
             }
-            var ok = await Game.Run(() =>
+            // Lifestream can ignore a request made right after the previous trip or shop (the wait then settles at once, still in
+            // the starting zone): when the zone didn't change at all, ask again, up to three times.
+            var startZone = await Game.Run(() => Svc.ClientState.TerritoryType).ConfigureAwait(false);
+            for (var attempt = 1; ; attempt++)
             {
-                try
+                var ok = await Game.Run(() =>
                 {
-                    // "/li <aethernet shard>" teleports to that city's aetheryte, walks to it and takes the aethernet.
-                    if (plan.Value.Shard) { Svc.PluginInterface.GetIpcSubscriber<string, object>("Lifestream.ExecuteCommand").InvokeAction(plan.Value.Label); return true; }
-                    return Svc.PluginInterface.GetIpcSubscriber<uint, byte, bool>("Lifestream.Teleport").InvokeFunc(plan.Value.AetheryteId, 0);
-                }
-                catch (Exception ex) { Svc.Log.Warning($"[MCP] Lifestream travel failed: {ex.Message}"); return false; }
-            }).ConfigureAwait(false);
-            if (!ok) throw new ToolException($"Lifestream could not travel to {plan.Value.Label} (is the aetheryte attuned?).");
-            steps.Add($"Lifestream: {(plan.Value.Shard ? "aethernet" : "teleport")} to {plan.Value.Label}.");
-            await WaitUntilSettled(ct).ConfigureAwait(false);
+                    try
+                    {
+                        // "/li <aethernet shard>" teleports to that city's aetheryte, walks to it and takes the aethernet.
+                        if (plan.Value.Shard) { Svc.PluginInterface.GetIpcSubscriber<string, object>("Lifestream.ExecuteCommand").InvokeAction(plan.Value.Label); return true; }
+                        return Svc.PluginInterface.GetIpcSubscriber<uint, byte, bool>("Lifestream.Teleport").InvokeFunc(plan.Value.AetheryteId, 0);
+                    }
+                    catch (Exception ex) { Svc.Log.Warning($"[MCP] Lifestream travel failed: {ex.Message}"); return false; }
+                }).ConfigureAwait(false);
+                if (!ok) throw new ToolException($"Lifestream could not travel to {plan.Value.Label} (is the aetheryte attuned?).");
+                steps.Add($"Lifestream: {(plan.Value.Shard ? "aethernet" : "teleport")} to {plan.Value.Label}.");
+                await Task.Delay(2000, ct).ConfigureAwait(false);
+                await WaitUntilSettled(ct).ConfigureAwait(false);
+                var now = await Game.Run(() => Svc.ClientState.TerritoryType).ConfigureAwait(false);
+                if (now != startZone || now == spot.Territory || attempt == 3) break;
+                steps.Add("Lifestream did not leave the zone; asking again.");
+                await Task.Delay(3000, ct).ConfigureAwait(false);
+            }
             if (await Game.Run(() => Svc.ClientState.TerritoryType).ConfigureAwait(false) != spot.Territory)
                 throw new ToolException($"Ended up in {await Game.Run(() => TerritoryName(Svc.ClientState.TerritoryType)).ConfigureAwait(false)} instead of {TerritoryName(spot.Territory)}.");
         }
