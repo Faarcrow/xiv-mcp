@@ -361,14 +361,14 @@ internal sealed partial class ConfigWindow : Window
                 "Your plugin collections are not changed. Chat says which plugin it turned on and off.");
 
         var toggle = config.TogglePluginsWithoutAsking;
-        if (ImGui.Checkbox("Turn plugins and collections on or off without asking##toggle-without-asking", ref toggle))
+        if (ImGui.Checkbox("Turn plugins on or off and update them without asking##toggle-without-asking", ref toggle))
         {
             config.TogglePluginsWithoutAsking = toggle;
             config.Save();
         }
-        Tooltip("Your AI assistant can enable and disable plugins, and plugin collections, without a prompt each time. Turning a plugin " +
-                "off can also turn off what it protects you from, so only switch this on if you are fine with that. Reloading a " +
-                "plugin and changing its settings still ask.");
+        Tooltip("Your AI assistant can enable and disable plugins and plugin collections, and install plugin updates (XIV MCP's own " +
+                "included), without a prompt each time. Turning a plugin off can also turn off what it protects you from, so only " +
+                "switch this on if you are fine with that. Reloading a plugin and changing its settings still ask.");
     }
 
     /// <summary>Optional gil limit above which a gil purchase asks too.</summary>

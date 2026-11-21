@@ -162,7 +162,7 @@ internal static class PluginTools
                           "replaces each plugin that has a newer version (all, or only those named). check_only=true just lists the available " +
                           "updates. XIV MCP updates itself last, a few seconds after answering: the connection drops while it reloads (reconnect " +
                           "afterwards), and background jobs come back paused. Refused while a job step acts in game. Asks in game first unless " +
-                          "plugins may be toggled without asking. Requires 'Plugin management' in /xivmcp.",
+                          "plugins may be turned on or off and updated without asking. Requires 'Plugin management' in /xivmcp.",
             InputSchema = """
                 {
                   "type": "object",
