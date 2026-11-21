@@ -241,7 +241,9 @@ internal static class LongRunningTools
                           "and crafts made per recipe, counted as the products arrive, so intermediates count even when later crafts use them up). " +
                           "Fails (job: pending) if Artisan stops without crafting anything (e.g. missing materials), and when Artisan stays busy " +
                           "without any craft progress for 'stall_minutes' (default 5): it is then stopped and the error names the recipe it is " +
-                          "stuck on — typically one with an equipment ingredient, which Artisan can't select in the crafting log. " +
+                          "stuck on — typically one with an equipment ingredient, which Artisan can't select in the crafting log. When Artisan's " +
+                          "Raphael solver works on one craft for 3 minutes without finishing, Artisan is stopped too (in a job the step then " +
+                          "runs again by itself and continues). " +
                           "Cancelling stops Artisan. Meant as a job step (start_job): when the same step runs again (resume after a pause, " +
                           "retry after a failure) it continues instead of starting over — the Artisan list is shrunk to the crafts still missing, " +
                           "and gets its original quantities back once everything is made. Requires Artisan and 'Crafting & gathering' in /xivmcp.",
@@ -355,8 +357,15 @@ internal static class LongRunningTools
                         var now = DateTime.UtcNow;
                         if (running) { sawRunning = true; }
                         else if (sawRunning || now - started > TimeSpan.FromSeconds(30)) break;
-                        // A paused list or a solver still working isn't stuck.
-                        if (paused || solving) progress.Touch(now);
+                        // A paused list or a solver still working isn't stuck, unless the solver works far too long without a craft.
+                        if (paused) progress.Touch(now);
+                        progress.SolverBusy(solving, now);
+                        if (running && progress.SolverHung(now, SolverLimit))
+                        {
+                            await Game.Run(() => { CraftGatherTools.StopArtisan(); return true; }).ConfigureAwait(false);
+                            await Settle().ConfigureAwait(false);
+                            throw new ToolException(progress.SolverHungMessage(plan.Name, SolverLimit) + Continues(progress));
+                        }
                         if (running && progress.Stalled(now, stallAfter))
                         {
                             var idle = progress.Idle(now);
@@ -448,6 +457,9 @@ internal static class LongRunningTools
             return $"The Artisan list still holds only the crafts that were missing (restoring it failed: {ex.Message}).";
         }
     }
+
+    /// <summary>How long Raphael may work on one craft before run_crafting_list counts it as hung and stops Artisan.</summary>
+    private static readonly TimeSpan SolverLimit = TimeSpan.FromMinutes(3);
 
     /// <summary>Artisan's Raphael solver is building a solution (a craft waits for it). Framework thread.</summary>
     private static bool RaphaelBusy()

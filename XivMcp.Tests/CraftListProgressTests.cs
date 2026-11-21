@@ -120,4 +120,41 @@ public class CraftListProgressTests
         Assert.True(GearIngredients.IsGear(equipSlotCategory: 1));
         Assert.False(GearIngredients.IsGear(equipSlotCategory: 0));
     }
+
+    [Fact]
+    public void A_solver_busy_for_too_long_without_a_craft_counts_as_hung()
+    {
+        var p = new CraftListProgress([Ingot], Counts(2, 0, 0, 0), T0);
+        var limit = TimeSpan.FromMinutes(3);
+        p.SolverBusy(true, T0);
+        Assert.False(p.SolverHung(T0.AddMinutes(2), limit));
+        p.SolverBusy(true, T0.AddMinutes(2));
+        Assert.False(p.Stalled(T0.AddMinutes(2), TimeSpan.FromMinutes(1))); // a busy solver still isn't a stall
+        p.SolverBusy(true, T0.AddMinutes(3));
+        Assert.True(p.SolverHung(T0.AddMinutes(3), limit));
+    }
+
+    [Fact]
+    public void Crafts_or_an_idle_solver_reset_the_solver_clock()
+    {
+        var p = new CraftListProgress([Ingot], Counts(4, 0, 0, 0), T0);
+        var limit = TimeSpan.FromMinutes(3);
+        p.SolverBusy(true, T0);
+        p.Observe(Counts(2, 1, 0, 0), T0.AddMinutes(2)); // a craft finished
+        p.SolverBusy(true, T0.AddMinutes(4));
+        Assert.False(p.SolverHung(T0.AddMinutes(4), limit));
+        p.SolverBusy(false, T0.AddMinutes(5));
+        p.SolverBusy(true, T0.AddMinutes(6));
+        Assert.False(p.SolverHung(T0.AddMinutes(8), limit));
+        Assert.False(p.SolverHung(T0.AddHours(1), TimeSpan.Zero));
+    }
+
+    [Fact]
+    public void Hung_solver_message_names_the_recipe_and_is_retried_by_jobs()
+    {
+        var p = new CraftListProgress([Ingot], Counts(2, 0, 0, 0), T0);
+        var message = p.SolverHungMessage("L", TimeSpan.FromMinutes(3));
+        Assert.Contains("Ingot", message);
+        Assert.True(XivMcp.Jobs.StepRetry.ShouldRetry(message, attempts: 1));
+    }
 }

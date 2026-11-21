@@ -24,6 +24,7 @@ public static class StepRetry
         "No character is currently logged in",
         "Can't change gear right now",
         "The character is casting",
+        "Artisan's solver hung",
     ];
 
     /// <param name="attempts">How many times the step ran so far, the failed run included.</param>

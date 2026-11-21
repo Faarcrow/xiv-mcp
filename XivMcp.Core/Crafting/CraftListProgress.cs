@@ -62,12 +62,37 @@ public sealed class CraftListProgress
             if (count > before) Credit(item, count - before);
         }
         last = new Dictionary<uint, int>(counts);
-        if (changed) lastActivity = now;
+        if (changed) { lastActivity = now; if (solvingSince is not null) solvingSince = now; }
         return changed;
     }
 
     /// <summary>Something else shows the crafting plugin is working (e.g. its solver is busy).</summary>
     public void Touch(DateTime now) => lastActivity = now;
+
+    private DateTime? solvingSince;
+
+    /// <summary>
+    /// Whether the crafting plugin's solver is working right now. A busy solver isn't a stall, but one that keeps working
+    /// without a single craft for long (Raphael can hang on a recipe started with HQ ingredients) is: see <see cref="SolverHung"/>.
+    /// </summary>
+    public void SolverBusy(bool busy, DateTime now)
+    {
+        if (!busy) { solvingSince = null; return; }
+        solvingSince ??= now;
+        lastActivity = now;
+    }
+
+    /// <summary>The solver has been busy for <paramref name="limit"/> with no craft meanwhile; a zero limit turns the check off.</summary>
+    public bool SolverHung(DateTime now, TimeSpan limit) =>
+        limit > TimeSpan.Zero && solvingSince is { } since && now - since >= limit;
+
+    public string SolverHungMessage(string listName, TimeSpan busy)
+    {
+        var minutes = Math.Max(1, (int)Math.Round(busy.TotalMinutes));
+        var current = Current;
+        return $"Artisan's solver hung: it worked for {minutes} minutes on {(current is null ? "the next craft" : $"{current.Item} (recipe {current.RecipeId})")} " +
+               $"of '{listName}' without finishing. Artisan was stopped; running the list again continues where it stopped.";
+    }
 
     /// <summary>No activity for <paramref name="threshold"/>; a zero threshold turns the check off.</summary>
     public bool Stalled(DateTime now, TimeSpan threshold) => threshold > TimeSpan.Zero && now - lastActivity >= threshold;
