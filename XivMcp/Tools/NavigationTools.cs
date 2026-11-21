@@ -335,11 +335,32 @@ internal static partial class NavigationTools
             // NPCs often stand behind a counter: walk to the nearest reachable point next to them, not into the counter.
             var goal = await Game.Run(() =>
                 Ipc<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPointReachable", t.Position, TalkRange - 1, 5f) ?? t.Position).ConfigureAwait(false);
-            if (!await StartPath(goal, ArriveRange, steps, ct).ConfigureAwait(false))
-                throw new ToolException($"vnavmesh could not start a path to {t.Name}.");
+            // Right after a teleport vnavmesh can still hold the old zone's mesh (or start loading the new one a moment later):
+            // the path then never starts. Wait until it runs, else wait for the mesh again and ask once more.
+            var started = false;
+            for (var attempt = 0; attempt < 3 && !started; attempt++)
+            {
+                if (attempt > 0)
+                {
+                    steps.Add("vnavmesh did not start the path; waiting for the navmesh and trying again.");
+                    var again = DateTime.UtcNow;
+                    await Task.Delay(1500, ct).ConfigureAwait(false);
+                    while (!await Game.Run(() => NavReady).ConfigureAwait(false))
+                    {
+                        if (DateTime.UtcNow - again > TimeSpan.FromSeconds(90)) throw new ToolException("vnavmesh did not finish building the navmesh for this zone.");
+                        await Task.Delay(500, ct).ConfigureAwait(false);
+                    }
+                    goal = await Game.Run(() =>
+                        Ipc<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPointReachable", t.Position, TalkRange - 1, 5f) ?? t.Position).ConfigureAwait(false);
+                }
+                if (!await StartPath(goal, ArriveRange, steps, ct).ConfigureAwait(false)) continue;
+                var until = DateTime.UtcNow.AddSeconds(5);
+                while (!(started = await Game.Run(() => PathRunning).ConfigureAwait(false)) && DateTime.UtcNow < until)
+                    await Task.Delay(200, ct).ConfigureAwait(false);
+            }
+            if (!started) throw new ToolException($"vnavmesh could not start a path to {t.Name}.");
             steps.Add($"vnavmesh: walking to {t.Name} ({t.Distance:0.#} yalms).");
             phase = $"walking to {t.Name}";
-            await Task.Delay(500, ct).ConfigureAwait(false);
             var approach = new Maps.Approach(TimeSpan.FromSeconds(3));
             while (await Game.Run(() => PathRunning).ConfigureAwait(false))
             {
