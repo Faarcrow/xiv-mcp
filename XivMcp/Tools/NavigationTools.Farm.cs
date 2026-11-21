@@ -92,13 +92,17 @@ internal static partial class NavigationTools
             var kills = 0;
             ulong? fighting = null;
             var lastAuto = DateTime.MinValue;
+            var unreachable = new UnreachableMobs();
+            XivMcp.Maps.Approach? approach = null;
+            ulong? approachFor = null;
+            bool Usable(ulong id) => !unreachable.IsSkipped(id, DateTime.UtcNow);
             var range = await Game.Run(() => MobFarm.Range((byte)(Svc.Objects.LocalPlayer?.ClassJob.ValueNullable?.Role ?? 3))).ConfigureAwait(false);
             try
             {
                 while (true)
                 {
                     ct.ThrowIfCancellationRequested();
-                    var view = await Game.Run(() => Look(target.NameId, spawn, fighting, item.RowId)).ConfigureAwait(false);
+                    var view = await Game.Run(() => Look(target.NameId, spawn, fighting, item.RowId, Usable)).ConfigureAwait(false);
                     if (view.Have != have) { have = view.Have; progressAt = DateTime.UtcNow; }
                     if (fighting is not null && !view.FightingAlive) { kills++; fighting = null; progressAt = DateTime.UtcNow; }
                     var now = DateTime.UtcNow;
@@ -115,7 +119,7 @@ internal static partial class NavigationTools
                                 await GetOffMount(steps, ct).ConfigureAwait(false);
                             fighting = await Game.Run(() =>
                             {
-                                var mob = NearestMob(target.NameId);
+                                var mob = NearestMob(target.NameId, Usable);
                                 if (mob is null) return (ulong?)null;
                                 Svc.Targets.Target = mob;
                                 Svc.Commands.ProcessCommand("/rotation Auto");
@@ -126,27 +130,42 @@ internal static partial class NavigationTools
                             var pickedMob = fighting;
                             var inCombat = view.InCombat;
                             var sendAuto = DateTime.UtcNow - lastAuto > TimeSpan.FromSeconds(3);
-                            var autoSent = await Game.Run(() =>
+                            var (autoSent, walkingDistance) = await Game.Run(() =>
                             {
                                 // The monster we picked: the game doesn't take a target that is far away, so keep setting it
                                 // while walking there, and fall back to the current target once a fight is on.
                                 var mob = pickedMob is { } id ? Svc.Objects.OfType<IBattleNpc>().FirstOrDefault(o => o.GameObjectId == id) : null;
                                 var t = mob ?? Svc.Targets.Target;
-                                if (t is null) return false;
+                                if (t is null) return (false, (float?)null);
                                 if (mob is not null && Svc.Targets.Target?.GameObjectId != mob.GameObjectId) Svc.Targets.Target = mob;
                                 if (Game.DistanceToPlayer(t.Position) is { } d && d > range + t.HitboxRadius)
                                 {
                                     // Pathfinding again every half second would restart it each time and never move.
                                     if (!PathRunning) MoveCloseTo(t.Position, range + t.HitboxRadius - 0.5f);
-                                    return false;
+                                    return (false, (float?)d);
                                 }
                                 if (PathRunning) StopMoving();
                                 // RotationSolver switches itself off after a fight, so the next monster is never attacked: in range
                                 // and not fighting yet, switch it on again (every few seconds, not every tick).
-                                if (!inCombat && sendAuto) { Svc.Commands.ProcessCommand("/rotation Auto"); return true; }
-                                return false;
+                                if (!inCombat && sendAuto) { Svc.Commands.ProcessCommand("/rotation Auto"); return (true, (float?)null); }
+                                return (false, (float?)null);
                             }).ConfigureAwait(false);
                             if (autoSent) lastAuto = DateTime.UtcNow;
+
+                            // Walking up to a monster we don't fight yet but not getting closer (behind trees, a cliff, no line of
+                            // sight): give it up for a while and take another one.
+                            if (walkingDistance is { } dist && !inCombat && pickedMob is { } walkingTo)
+                            {
+                                if (approachFor != walkingTo) { approach = new XivMcp.Maps.Approach(UnreachableMobs.StallWindow); approachFor = walkingTo; }
+                                if (approach!.Stalled(dist, DateTime.UtcNow))
+                                {
+                                    unreachable.Skip(walkingTo, DateTime.UtcNow);
+                                    await Game.Run(() => { StopMoving(); Svc.Targets.Target = null; return true; }).ConfigureAwait(false);
+                                    steps.Add($"Could not reach a {target.Name} {dist:0} yalms away; trying another one.");
+                                    fighting = null;
+                                    approachFor = null;
+                                }
+                            }
                             break;
                         case MobFarmAction.ReturnToSpawn:
                             if (!await Game.Run(() => PathRunning).ConfigureAwait(false))
@@ -207,12 +226,12 @@ internal static partial class NavigationTools
     private sealed record FarmView(int Have, double HpPercent, bool Dead, bool InCombat, bool FightingAlive, double? NearestDistance, double DistanceToSpawn);
 
     /// <summary>What the farm loop needs to decide. Framework thread.</summary>
-    private static FarmView Look(uint nameId, Vector3 spawn, ulong? fighting, uint itemId)
+    private static FarmView Look(uint nameId, Vector3 spawn, ulong? fighting, uint itemId, Func<ulong, bool> usable)
     {
         var p = Svc.Objects.LocalPlayer;
         var hp = p is { MaxHp: > 0 } ? 100.0 * p.CurrentHp / p.MaxHp : 0;
         var alive = fighting is { } id && Svc.Objects.FirstOrDefault(o => o.GameObjectId == id) is IBattleNpc b && !b.IsDead && b.CurrentHp > 0;
-        var nearest = NearestMob(nameId);
+        var nearest = NearestMob(nameId, usable);
         return new FarmView(Items.CountInBags(itemId), hp, p is null || p.IsDead, Svc.Condition[ConditionFlag.InCombat], alive,
             nearest is null ? null : Game.DistanceToPlayer(nearest.Position),
             p is null ? 0 : Vector2.Distance(new(p.Position.X, p.Position.Z), new(spawn.X, spawn.Z)));
@@ -228,9 +247,9 @@ internal static partial class NavigationTools
     }
 
     /// <summary>The nearest living, targetable monster of the kind. Framework thread.</summary>
-    private static IBattleNpc? NearestMob(uint nameId) =>
+    private static IBattleNpc? NearestMob(uint nameId, Func<ulong, bool> usable) =>
         Svc.Objects.OfType<IBattleNpc>()
-            .Where(o => o.NameId == nameId && o.IsTargetable && !o.IsDead && o.CurrentHp > 0)
+            .Where(o => o.NameId == nameId && o.IsTargetable && !o.IsDead && o.CurrentHp > 0 && usable(o.GameObjectId))
             .OrderBy(o => Game.DistanceToPlayer(o.Position) ?? float.MaxValue)
             .FirstOrDefault();
 }
