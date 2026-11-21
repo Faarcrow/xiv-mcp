@@ -11,7 +11,7 @@ namespace XivMcp.Tools;
 
 internal static class InventoryTools
 {
-    private static readonly string[] EquipSlots =
+    public static readonly string[] EquipSlots =
         ["MainHand", "OffHand", "Head", "Body", "Hands", "Waist", "Legs", "Feet", "Ears", "Neck", "Wrists", "RightRing", "LeftRing", "SoulCrystal"];
 
     /// <summary>Named groups of containers; raw GameInventoryType names are accepted as well.</summary>
