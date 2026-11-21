@@ -70,6 +70,13 @@ internal static partial class NavigationTools
                 : (await Game.Run(() => CombatGearset.Ranked(Gearsets.All().Select(s => new GearsetChoice(s.Number, s.CombatJob, s.ItemLevel, s.MissingItems))))
                       .ConfigureAwait(false)).Take(3).Select(n => n.ToString()).ToList();
             if (candidates.Count == 0) throw new ToolException("No combat gearset is saved.");
+            // Started while something still attacks (left from an earlier farm): the gear can't change and travel is refused.
+            // Let RotationSolver finish that fight first.
+            for (var i = 0; i < 120 && await Game.Run(() => Svc.Objects.LocalPlayer is { IsDead: false } && Svc.Condition[ConditionFlag.InCombat]).ConfigureAwait(false); i++)
+            {
+                if (i % 3 == 0) await Game.Run(() => { Svc.Commands.ProcessCommand("/rotation Auto"); return true; }).ConfigureAwait(false);
+                await Task.Delay(1000, ct).ConfigureAwait(false);
+            }
             Gearsets.Set? set = null;
             foreach (var candidate in candidates)
             {
