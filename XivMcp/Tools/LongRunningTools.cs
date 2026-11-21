@@ -326,8 +326,15 @@ internal static class LongRunningTools
                 }
                 async Task Settle()
                 {
-                    // A craft that was in progress when Artisan stopped may still deliver its product.
+                    // A craft that was in progress when Artisan stopped may still deliver its product, sometimes well after the
+                    // stop (its last actions still play out). Counting before it lands made the next run craft it a second time.
                     await Task.Delay(3000, CancellationToken.None).ConfigureAwait(false);
+                    for (var i = 0; i < 90 && await Game.Run(() => Svc.Condition[ConditionFlag.Crafting]).ConfigureAwait(false); i++)
+                    {
+                        await Task.Delay(1000, CancellationToken.None).ConfigureAwait(false);
+                        progress.Observe(await Game.Run(Counts).ConfigureAwait(false), DateTime.UtcNow);
+                    }
+                    await Task.Delay(1500, CancellationToken.None).ConfigureAwait(false);
                     progress.Observe(await Game.Run(Counts).ConfigureAwait(false), DateTime.UtcNow);
                     Remember();
                 }
