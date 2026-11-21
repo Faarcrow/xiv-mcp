@@ -323,6 +323,13 @@ internal static class QuestionableTools
                     // Questionable can get stuck (walking towards a spot in another zone after a teleport went wrong) while it still
                     // reports running: starting it again from its current step gets it going.
                     // A step for the player (a duty it cannot run, a solo duty, something by hand): Questionable waits for it.
+                    // "Meld any materia on X": Questionable waits for a click on Skip even when X already carries materia.
+                    if (await Game.Run(SkipDoneMeld).ConfigureAwait(false) is { } skipped)
+                    {
+                        Svc.Log.Information($"[MCP] {skipped}");
+                        stall = new StallWatch(StallLimit);
+                        continue;
+                    }
                     if (chat.Last is { } said && QuestionableMessage.NeedsPlayer(said))
                         throw new ToolException($"Questionable waits for you: \"{QuestionableMessage.Text(said)}\" Do that step yourself (a duty also with AutoDuty), then start again.");
                     if (s.Running && stall.Stalled(DateTime.UtcNow, s.Position, s.Busy))
@@ -519,6 +526,76 @@ internal static class QuestionableTools
     }
 
     /// <summary>" It was stuck on task X (next: …)." for an error message, or nothing when the task is out of reach.</summary>
+    private static string? lastSkippedStep;
+
+    /// <summary>
+    /// When Questionable waits at a manual "meld materia on X" step and an X in the bags, armoury or worn gear already carries
+    /// materia, presses its Skip (QuestController.Skip(questId, sequence), what its window's Skip button calls) once. Returns what
+    /// it did, or null. Framework thread.
+    /// </summary>
+    private static string? SkipDoneMeld()
+    {
+        try
+        {
+            if (!Loaded) return null;
+            var controller = QuestController();
+            var progress = controller.GetType().GetProperty("CurrentQuest", Any)?.GetValue(controller);
+            if (progress is null) return null;
+            var quest = progress.GetType().GetProperty("Quest", Any)?.GetValue(progress);
+            var sequence = progress.GetType().GetProperty("Sequence", Any)?.GetValue(progress) as byte?;
+            var stepIndex = progress.GetType().GetProperty("Step", Any)?.GetValue(progress) as int?;
+            if (quest is null || sequence is null || stepIndex is null) return null;
+            var seq = quest.GetType().GetMethod("FindSequence", Any)?.Invoke(quest, [sequence.Value]);
+            var step = seq?.GetType().GetMethod("FindStep", Any)?.Invoke(seq, [stepIndex.Value]);
+            if (step is null) return null;
+            var type = step.GetType().GetProperty("InteractionType", Any)?.GetValue(step)?.ToString();
+            var comment = step.GetType().GetProperty("Comment", Any)?.GetValue(step) as string;
+            if (XivMcp.Quests.ManualStep.MeldItem(type, comment) is not { } itemName) return null;
+            var questId = quest.GetType().GetProperty("Id", Any)?.GetValue(quest);
+            var key = $"{questId}/{sequence}/{stepIndex}";
+            if (key == lastSkippedStep || !HasMelded(itemName)) return null;
+            var skip = controller.GetType().GetMethods(Any).FirstOrDefault(m => m.Name == "Skip" && m.GetParameters().Length == 2);
+            if (skip is null || questId is null) return null;
+            skip.Invoke(controller, [questId, sequence.Value]);
+            lastSkippedStep = key;
+            return $"Questionable waited for \"{comment}\"; {itemName} already carries materia, so its step was skipped.";
+        }
+        catch (Exception e)
+        {
+            Svc.Log.Debug($"[MCP] Checking Questionable's manual step failed: {e.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>Whether a piece of gear of that name (bags, armoury, worn) has materia melded. Framework thread.</summary>
+    private static unsafe bool HasMelded(string itemName)
+    {
+        var im = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        var containers = new[]
+        {
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory1, FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory2,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory3, FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory4,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.EquippedItems, FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryMainHand,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryOffHand, FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryHead,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryBody, FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryHands,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryLegs, FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryFeets,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryEar, FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryNeck,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryWrist, FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmoryRings,
+        };
+        foreach (var type in containers)
+        {
+            var c = im->GetInventoryContainer(type);
+            if (c == null || !c->IsLoaded) continue;
+            for (var i = 0; i < c->Size; i++)
+            {
+                var slot = c->GetInventorySlot(i);
+                if (slot == null || slot->ItemId == 0 || slot->Materia[0] == 0) continue;
+                if (string.Equals(Items.Name(slot->ItemId), itemName, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+        }
+        return false;
+    }
+
     private static string StuckOn()
     {
         try
