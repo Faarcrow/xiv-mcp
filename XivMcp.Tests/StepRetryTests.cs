@@ -9,6 +9,8 @@ public class StepRetryTests
     [InlineData("The market board did not send the listings (it may be busy; try again in a moment).")]
     [InlineData("No character is currently logged in.")]
     [InlineData("recovery: Not free: The character is loading a zone, which recovery doesn't interrupt.")]
+    [InlineData("Can't change gear right now (crafting, gathering, casting, in a cutscene or a zone change).")]
+    [InlineData("recovery: Not free: The character is casting, which recovery doesn't interrupt.")]
     public void Passing_game_states_are_retried(string error) => Assert.True(StepRetry.ShouldRetry(error, attempts: 1));
 
     [Theory]

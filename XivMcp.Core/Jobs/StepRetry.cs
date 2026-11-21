@@ -4,7 +4,8 @@ namespace XivMcp.Jobs;
 
 /// <summary>
 /// Which failed job steps are worth running again by themselves: failures that only mean the game was briefly busy (a zone
-/// still loading after travel, the market board not answering, a short logout during world travel). Everything else stops the
+/// still loading after travel, the market board not answering, a short logout during world travel, a cast such as a teleport
+/// still running when the next step wants to change gear). Everything else stops the
 /// job for the agent, like before.
 /// </summary>
 public static class StepRetry
@@ -21,6 +22,8 @@ public static class StepRetry
         "loading a zone",
         "did not send the listings",
         "No character is currently logged in",
+        "Can't change gear right now",
+        "The character is casting",
     ];
 
     /// <param name="attempts">How many times the step ran so far, the failed run included.</param>
