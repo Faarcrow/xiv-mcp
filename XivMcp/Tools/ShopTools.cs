@@ -775,6 +775,9 @@ internal static class ShopTools
     /// </summary>
     private static bool RequireUnlocked(uint itemId)
     {
+        if (Svc.Data.GetExcelSheet<Item>().TryGetRow(itemId, out var item) &&
+            ShopUnlocks.AlreadyLearned(Svc.Unlocks.IsItemUnlockable(item), Svc.Unlocks.IsItemUnlocked(item), item.IsUnique))
+            throw new ToolException($"{item.Name.ExtractText()} is already learned, so shops won't sell it again (and it isn't needed).");
         var quests = Svc.Data.GetExcelSheet<SpecialShop>()
             .Where(s => s.Item.Any(i => i.ReceiveItems.Any(r => r.Item.RowId == itemId)))
             .Select(s => s.Quest.RowId);
