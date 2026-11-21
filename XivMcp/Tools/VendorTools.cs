@@ -14,16 +14,20 @@ using XivMcp.Util;
 namespace XivMcp.Tools;
 
 /// <summary>
-/// Selling items to an NPC merchant for gil, as a player does with a shop open: each stack's context menu, "Sell", and the
-/// game's own confirmation where it asks. Whole stacks only (the game sells the stack the menu was opened on).
+/// Selling items for gil, as a player does with a merchant's shop open (the context menu's "Sell") or with a retainer's
+/// inventory open at a summoning bell ("Have Retainer Sell Items"), and the game's own confirmation where it asks. Whole
+/// stacks only (the game sells the stack the menu was opened on).
 /// </summary>
 internal static class VendorTools
 {
-    /// <summary>The context menu's "Sell" entry (Addon rows that read "Sell").</summary>
-    private static readonly uint[] SellTexts = [93, 516, 530, 3886, 9520, 17655];
+    /// <summary>The context menu's "Sell" entry (Addon rows that read "Sell"), and "Have Retainer Sell Items" (5480).</summary>
+    private static readonly uint[] SellTexts = [93, 516, 530, 3886, 9520, 17655, 5480];
 
     /// <summary>"Sell … for … gil?": the confirmation the game shows for some items.</summary>
     private const uint SellPrompt = 3407;
+
+    /// <summary>"This item is unique and untradable. Are you certain you wish to sell it?"</summary>
+    private const uint UntradableWarning = 399;
 
     private static readonly string[] InventoryAddons = ["InventoryExpansion", "InventoryLarge", "Inventory"];
 
@@ -34,11 +38,14 @@ internal static class VendorTools
         yield return new McpTool
         {
             Name = "sell_to_vendor",
-            Description = "Sells items from the bags to an NPC merchant for gil, as the inventory's context menu 'Sell' does while a shop " +
-                          "window is open: the merchant's shop must be open (talk to a merchant, open its shop). Whole stacks, smallest " +
-                          "first: all of an item, at most 'quantity', or all but 'keep'. Vendors pay little (often 1 to 10 gil each), so " +
-                          "check the market board first (get_market_prices). Items a vendor does not buy are reported and left alone. " +
-                          "Sold items show in the shop's buyback tab until the shop is closed. Requires 'Market & purchases' in /xivmcp.",
+            Description = "Sells items from the bags for gil, as the inventory's context menu does: 'Sell' while a merchant's shop is " +
+                          "open (talk to a merchant, open its shop), or 'Have Retainer Sell Items' while a retainer's inventory is open " +
+                          "at a summoning bell (open_retainer), which saves walking to a merchant. Whole stacks, smallest first: all of " +
+                          "an item, at most 'quantity', or all but 'keep'. Vendors pay little (often 1 to 10 gil each), so check the " +
+                          "market board first (get_market_prices). Items a vendor does not buy are reported and left alone. Untradable items " +
+                          "are only sold after the player approves them in game (one question for all of them in the call); declined ones " +
+                          "are left alone. Sold items can be bought back: from a merchant's buyback tab until the shop is closed, or from " +
+                          "the retainer's \"Item buyback\" until it is dismissed. Requires 'Market & purchases' in /xivmcp.",
             InputSchema = """
                 {
                   "type": "object",
@@ -77,14 +84,20 @@ internal static class VendorTools
                 {
                     var resolved = await Game.RunLoggedIn(() =>
                     {
-                        if (!ShopOpen()) throw new ToolException("No shop is open. Talk to a merchant and open its shop first (navigate_to destination npc or object), then sell.");
+                        if (!CanSell()) throw new ToolException("No shop or retainer inventory is open. Talk to a merchant and open its shop first (navigate_to destination npc or object), or open a retainer at a summoning bell (open_retainer), then sell.");
                         return wanted.Select(w => (Item: Items.Resolve(w.Query), w.Quantity, w.Keep)).ToList();
                     }).ConfigureAwait(false);
+                    var untradableApproved = await ApproveUntradable(resolved.Select(r => r.Item), ct).ConfigureAwait(false);
                     var gilBefore = await Game.Run(Gil).ConfigureAwait(false);
                     var results = new List<object>();
                     foreach (var (item, quantity, keep) in resolved)
                     {
                         var name = item.Name.ExtractText();
+                        if (item.IsUntradable && item.PriceLow > 0 && !untradableApproved)
+                        {
+                            results.Add(new { item = name, sold = 0, note = "Untradable: the player did not approve selling it in game, so it was left alone." });
+                            continue;
+                        }
                         var stacks = await Game.Run(() => StacksOf(item.RowId)).ConfigureAwait(false);
                         IReadOnlyList<int> pick;
                         try { pick = VendorSale.Pick(stacks.Select(s => s.Quantity).ToList(), quantity, keep); }
@@ -101,7 +114,7 @@ internal static class VendorTools
                             ct.ThrowIfCancellationRequested();
                             try
                             {
-                                await SellStack(stack, name, ct).ConfigureAwait(false);
+                                await SellStack(stack, name, item.IsUntradable && untradableApproved, ct).ConfigureAwait(false);
                                 sold += stack.Quantity;
                             }
                             catch (ToolException e)
@@ -125,8 +138,30 @@ internal static class VendorTools
 
     private sealed record Stack(InventoryType Container, int Slot, uint ItemId, int Quantity);
 
+    private static readonly TimeSpan ConsentTimeout = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Asks the player in game once whether the untradable items of this call may be sold: once gone (and no longer in a buyback
+    /// list), they can't be bought from other players again. True when there are none to ask about.
+    /// </summary>
+    private static async Task<bool> ApproveUntradable(IEnumerable<Lumina.Excel.Sheets.Item> items, CancellationToken ct)
+    {
+        var untradable = items.Where(i => i.IsUntradable && i.PriceLow > 0).Select(i => i.Name.ExtractText()).Distinct().ToList();
+        if (untradable.Count == 0) return true;
+        var details = untradable.Select(n => $"{n} (untradable)").ToList();
+        details.Add("They can be bought back from the merchant's buyback tab, or the retainer's \"Item buyback\", until that closes.");
+        var request = new Consent.Request(untradable.Count == 1 ? $"Sell {untradable[0]}?" : $"Sell {untradable.Count} untradable items?", details)
+        {
+            Deadline = DateTime.UtcNow + ConsentTimeout,
+            Warning = "Untradable items can't be bought from other players again.",
+            Risk = Permissions.RiskLevel.High,
+            OfferSession = true,
+        };
+        return await Consent.AskOrSession("sell_to_vendor:untradable", request, ConsentTimeout, ct).ConfigureAwait(false);
+    }
+
     /// <summary>Sells one stack: its context menu, "Sell", the confirmation if the game asks; waits until it is gone from the bag.</summary>
-    private static async Task SellStack(Stack stack, string name, CancellationToken ct)
+    private static async Task SellStack(Stack stack, string name, bool sellUntradable, CancellationToken ct)
     {
         await Game.Run(() => { OpenContextMenu(stack); return true; }).ConfigureAwait(false);
         if (!await GameWindows.WaitFor(() => GameWindows.Ready("ContextMenu"), TimeSpan.FromSeconds(3), ct).ConfigureAwait(false))
@@ -136,25 +171,34 @@ internal static class VendorTools
         while (DateTime.UtcNow < deadline)
         {
             await Task.Delay(200, ct).ConfigureAwait(false);
+            string? question = null;
             var state = await Game.Run(() =>
             {
                 if (SlotQuantity(stack) != stack.Quantity) return "sold";
-                return GameWindows.Ready("SelectYesno") ? AnswerPrompt() : "waiting";
+                return GameWindows.Ready("SelectYesno") ? AnswerPrompt(sellUntradable, out question) : "waiting";
             }).ConfigureAwait(false);
             if (state == "sold") return;
-            if (state == "refused") throw new ToolException($"Selling {name} asked something unexpected; it was answered No and nothing more was sold.");
+            if (state == "untradable") throw new ToolException($"The game warned that {name} is unique and untradable, and the player had not approved selling it; it was answered No.");
+            if (state == "refused") throw new ToolException($"Selling {name} asked something unexpected (\"{question}\"); it was answered No and nothing more was sold.");
         }
         throw new ToolException($"{name} was not sold (the merchant may not buy it, or the shop closed).");
     }
 
-    /// <summary>Answers the yes/no that came up: Yes when it asks to sell ("Sell … for … gil?"), else No.</summary>
-    private static unsafe string AnswerPrompt()
+    /// <summary>
+    /// Answers the yes/no that came up: Yes when it asks to sell ("Sell … for … gil?"), Yes to the unique and untradable warning
+    /// only when allowed, else No.
+    /// </summary>
+    private static unsafe string AnswerPrompt(bool sellUntradable, out string question)
     {
         var yesno = GameWindows.Addon("SelectYesno");
-        var asksToSell = GameWindows.AllTexts(yesno)
-            .Any(t => GameWindows.Texts(SellPrompt).Any(p => t.StartsWith(p.Split(' ')[0], StringComparison.OrdinalIgnoreCase)));
-        RetainerUi.Fire(yesno, true, asksToSell ? 0 : 1);
-        return asksToSell ? "confirmed" : "refused";
+        var texts = GameWindows.AllTexts(yesno);
+        question = string.Join(" ", texts.Where(t => !string.IsNullOrWhiteSpace(t)));
+        var sellPrompt = GameWindows.TemplatePieces(SellPrompt);
+        var untradable = GameWindows.TemplatePieces(UntradableWarning);
+        var yes = texts.Any(t => VendorSale.Confirms(t, sellPrompt, untradable, sellUntradable));
+        RetainerUi.Fire(yesno, true, yes ? 0 : 1);
+        if (yes) return "confirmed";
+        return texts.Any(t => VendorSale.IsUntradableWarning(t, untradable)) ? "untradable" : "refused";
     }
 
     private static unsafe void OpenContextMenu(Stack stack)
@@ -185,10 +229,11 @@ internal static class VendorTools
             }
         }
         RetainerUi.Fire(menu, true, -1);
-        throw new ToolException($"{name}'s context menu has no Sell entry: the shop window may have closed, or merchants do not buy it.");
+        throw new ToolException($"{name}'s context menu has no Sell entry: the shop or retainer window may have closed, or merchants do not buy it.");
     }
 
-    private static bool ShopOpen() => GameWindows.Ready("Shop");
+    /// <summary>A merchant's shop, or a retainer's inventory (whose context menu offers "Have Retainer Sell Items"), is open.</summary>
+    private static bool CanSell() => GameWindows.Ready("Shop") || RetainerUi.InventoryOpen;
 
     private static unsafe long Gil() => InventoryManager.Instance()->GetGil();
 

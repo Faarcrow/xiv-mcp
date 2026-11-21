@@ -27,4 +27,17 @@ public static class VendorSale
         }
         return picked;
     }
+
+    /// <summary>
+    /// Whether to answer Yes to a question the game asks while selling: its "Sell … for … gil?", and its warning about a unique
+    /// and untradable item only when <paramref name="sellUntradable"/> is set. Anything else gets No. The prompts are given as
+    /// their text sheet rows' fixed pieces (see <see cref="Ui.PromptTemplate"/>).
+    /// </summary>
+    public static bool Confirms(string prompt, IReadOnlyList<string> sellPrompt, IReadOnlyList<string> untradableWarning, bool sellUntradable) =>
+        Ui.PromptTemplate.Matches(prompt, sellPrompt)
+        || (sellUntradable && Ui.PromptTemplate.Matches(prompt, untradableWarning));
+
+    /// <summary>Whether the question is the game's warning about selling a unique and untradable item.</summary>
+    public static bool IsUntradableWarning(string prompt, IReadOnlyList<string> untradableWarning) =>
+        Ui.PromptTemplate.Matches(prompt, untradableWarning);
 }

@@ -20,6 +20,7 @@ internal static class RetainerUi
 {
     private const uint AddonEntrustOrWithdraw = 2378; // "Entrust or withdraw items."
     private const uint AddonQuit = 2383;              // "Quit."
+    private const uint AddonItemBuyback = 2397;       // "Item buyback.": shown while the retainer holds items it sold for you
 
     private static readonly string[] InventoryAddons = ["InventoryRetainerLarge", "InventoryRetainer"];
 
@@ -97,7 +98,11 @@ internal static class RetainerUi
         }
     }
 
-    /// <summary>Closes the current retainer and returns to the retainer list. No-op if no retainer is open.</summary>
+    /// <summary>
+    /// Closes the current retainer and returns to the retainer list. No-op if no retainer is open. A retainer that sold items to
+    /// a vendor for you can buy them back only until it is dismissed, and the game asks before dismissing it: the player is asked
+    /// in game first, and if they decline, the retainer stays open and this throws.
+    /// </summary>
     public static async Task Close(CancellationToken ct)
     {
         var state = new StepState();
@@ -107,13 +112,36 @@ internal static class RetainerUi
             ct.ThrowIfCancellationRequested();
             if (DateTime.UtcNow > deadline) throw new ToolException("Timed out closing the retainer. Current windows may need manual attention.");
             if (await Svc.Framework.RunOnFrameworkThread(() => CloseStep(state)).ConfigureAwait(false)) return;
+            if (state.BuybackHeldBy is { } retainer && !state.DiscardBuyback)
+            {
+                var request = new Consent.Request($"Dismiss {retainer}?",
+                    [$"{retainer} still holds items sold to a vendor for you (\"Item buyback\" in the retainer's menu).",
+                     "Once the retainer is dismissed, they can no longer be bought back."])
+                {
+                    Deadline = DateTime.UtcNow + BuybackConsentTimeout,
+                    Warning = "Can't be undone.",
+                    Risk = Permissions.RiskLevel.High,
+                    OfferSession = true,
+                };
+                if (!await Consent.AskOrSession("retainer:discard_buyback", request, BuybackConsentTimeout, ct).ConfigureAwait(false))
+                    throw new ToolException($"{retainer} still holds items it sold for you, which can be bought back (\"Item buyback\" in its menu) " +
+                                            "only until it is dismissed, and the player did not approve dismissing it in game. The retainer stays open.");
+                state.DiscardBuyback = true;
+                deadline = DateTime.UtcNow.AddSeconds(20);
+            }
             await Task.Delay(150, ct).ConfigureAwait(false);
         }
     }
 
+    private static readonly TimeSpan BuybackConsentTimeout = TimeSpan.FromMinutes(2);
+
     private sealed class StepState
     {
         public DateTime LastAction = DateTime.MinValue;
+        public bool DiscardBuyback;
+        public bool QuitWithBuyback;
+        /// <summary>Set when the retainer menu shows "Item buyback." and the player hasn't approved giving it up yet.</summary>
+        public string? BuybackHeldBy;
         public bool Throttled => DateTime.UtcNow - LastAction < TimeSpan.FromMilliseconds(800);
         public void Acted() => LastAction = DateTime.UtcNow;
     }
@@ -182,8 +210,23 @@ internal static class RetainerUi
                 if (Ready(addon)) Addon(addon)->Close(true);
             state.Acted();
         }
+        else if (state.QuitWithBuyback && Ready("SelectYesno"))
+        {
+            // "Your retainer will be unable to process item buyback requests once recalled. Are you sure you wish to proceed?"
+            Fire(Addon("SelectYesno"), true, 0);
+            state.Acted();
+        }
         else if (Ready("SelectString"))
         {
+            if (HasMenuEntry(AddonItemBuyback))
+            {
+                if (!state.DiscardBuyback)
+                {
+                    state.BuybackHeldBy = ActiveRetainerName ?? "The retainer"; // Close asks the player, then comes back here
+                    return false;
+                }
+                state.QuitWithBuyback = true;
+            }
             if (!SelectMenuEntry(AddonQuit)) throw new ToolException("Could not find \"Quit\" in the retainer menu.");
             state.Acted();
         }
@@ -303,6 +346,14 @@ internal static class RetainerUi
             }
         }
         return false;
+    }
+
+    /// <summary>Whether the open SelectString menu has an entry with this text sheet row's text (icons and placeholders aside).</summary>
+    private static bool HasMenuEntry(uint addonTextRow)
+    {
+        var full = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Addon>().GetRow(addonTextRow).Text.ExtractText();
+        var wanted = (full.IndexOf('(') is > 0 and var cut ? full[..cut] : full).Trim();
+        return MenuEntries()?.Any(e => e.Contains(wanted, StringComparison.OrdinalIgnoreCase)) == true;
     }
 
     /// <summary>Entries of the currently open SelectString menu, or null if none is open.</summary>

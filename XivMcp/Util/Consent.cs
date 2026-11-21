@@ -85,6 +85,22 @@ internal static class Consent
             : "The player declined in game; nothing was done.");
     }
 
+    private static readonly HashSet<string> ApprovedForSession = [];
+
+    /// <summary>
+    /// Asks like <see cref="Ask"/>, offering "Approve for this session": once the player picks that, later questions with the same
+    /// <paramref name="key"/> are approved without asking until the game or XIV MCP restarts. True when approved.
+    /// </summary>
+    public static async Task<bool> AskOrSession(string key, Request request, TimeSpan timeout, CancellationToken ct)
+    {
+        lock (Sync)
+            if (ApprovedForSession.Contains(key)) return true;
+        var answer = await Ask(request, timeout, ct).ConfigureAwait(false);
+        if (answer == ApprovalDecision.ApprovedForSession)
+            lock (Sync) ApprovedForSession.Add(key);
+        return answer != ApprovalDecision.Denied;
+    }
+
     public static void Answer(Request request, ApprovalDecision decision)
     {
         Svc.Log.Information($"[MCP] Player answered {decision}: {request.Title}");

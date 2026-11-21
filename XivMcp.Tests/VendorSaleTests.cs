@@ -35,4 +35,31 @@ public class VendorSaleTests
         Assert.Throws<ArgumentOutOfRangeException>(() => VendorSale.Pick(Stacks, quantity: 0, keep: 0));
         Assert.Throws<ArgumentOutOfRangeException>(() => VendorSale.Pick(Stacks, quantity: null, keep: -1));
     }
+
+    // Addon rows 3407 ("Sell <item> for <gil> gil?") and 399, as their fixed pieces.
+    private static readonly string[] SellPrompt = ["Sell ", " for ", " gil?"];
+    private static readonly string[] UntradableWarning = ["This item is unique and untradable. Are you certain you wish to sell it?"];
+
+    [Fact]
+    public void The_sell_question_is_answered_yes()
+    {
+        Assert.True(VendorSale.Confirms("Sell Crimson Hat for 236 gil?", SellPrompt, UntradableWarning, sellUntradable: false));
+    }
+
+    [Fact]
+    public void The_untradable_warning_is_answered_yes_only_when_allowed()
+    {
+        const string warning = "This item is unique and untradable.\nAre you certain you wish to sell it?";
+        Assert.False(VendorSale.Confirms(warning, SellPrompt, UntradableWarning, sellUntradable: false));
+        Assert.True(VendorSale.Confirms(warning, SellPrompt, UntradableWarning, sellUntradable: true));
+        Assert.True(VendorSale.IsUntradableWarning(warning, UntradableWarning));
+    }
+
+    [Fact]
+    public void Other_questions_are_answered_no()
+    {
+        const string materia = "This item has materia attached. Are you certain you wish to sell it?";
+        Assert.False(VendorSale.Confirms(materia, SellPrompt, UntradableWarning, sellUntradable: true));
+        Assert.False(VendorSale.IsUntradableWarning(materia, UntradableWarning));
+    }
 }

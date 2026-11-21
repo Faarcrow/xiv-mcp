@@ -121,9 +121,11 @@ internal static class RetainerTools
             Name = "close_retainer",
             Description = "Closes the currently open retainer (inventory window, then \"Quit\" in the retainer menu) and returns to the retainer list. " +
                           "With close_list=true the retainer list is closed as well, ending the summoning bell session (a paused retainer automation " +
-                          "plugin resumes then). Requires 'Items & retainers' in /xivmcp.",
+                          "plugin resumes then). A retainer that sold items to a vendor for you (sell_to_vendor) can buy them back only until it is " +
+                          "dismissed: the player is asked in game first, and if they decline, the retainer stays open. Requires 'Items & retainers' in /xivmcp.",
             InputSchema = """
-                { "type": "object", "properties": { "close_list": { "type": "boolean", "description": "Also close the retainer list / leave the bell (default false)." } } }
+                { "type": "object", "properties": {
+                    "close_list": { "type": "boolean", "description": "Also close the retainer list / leave the bell (default false)." } } }
                 """,
             ReadOnly = false,
             Handler = async (args, ct) =>
