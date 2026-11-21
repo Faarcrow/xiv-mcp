@@ -25,6 +25,9 @@ public static class StepRetry
         "Can't change gear right now",
         "The character is casting",
         "Artisan's solver hung",
+        // Questionable often gives up right after a teleport or a craft and goes on fine when started again; a real stop
+        // (a duty, a level) still parks the job once the retries are used up.
+        "Questionable stopped on its own",
     ];
 
     /// <param name="attempts">How many times the step ran so far, the failed run included.</param>
