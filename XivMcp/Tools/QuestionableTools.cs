@@ -282,6 +282,11 @@ internal static class QuestionableTools
                     await Gearsets.Switch(await Game.Run(() => JobAbbreviation(job)).ConfigureAwait(false), ct).ConfigureAwait(false);
                 }
 
+                // A window that holds the character (the retainer list AutoRetainer's retainer sense opens at a bell, a shop) keeps
+                // Questionable from teleporting: it then waits forever. Close it first.
+                if (await Game.Run(() => Recovery.Occupied).ConfigureAwait(false))
+                    await Recovery.Run(ct).ConfigureAwait(false);
+
                 // Only the quests this job can do: the others come in a later round, after switching.
                 var (batch, accepting) = await Game.Run(() =>
                 {
