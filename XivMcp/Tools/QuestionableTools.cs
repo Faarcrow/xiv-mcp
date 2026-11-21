@@ -271,7 +271,7 @@ internal static class QuestionableTools
                         throw new ToolException($"{next.Name} cannot be accepted yet" + (reason.Length > 0 ? $" ({reason})." : ".") + LevelWarning([next]));
                     }
                     // Quests remember the job they were accepted on, and Questionable does not switch jobs: accept on one that can do it.
-                    var job = IsAccepted(next) ? Gearsets.CurrentJob() : JobFor(next)
+                    var job = IsAccepted(next) ? QuestJobs.ForAccepted(AcceptedJob(next) ?? 0, Gearsets.CurrentJob(), GearsetJobs()) : JobFor(next)
                               ?? throw new ToolException($"No gearset is saved for a job that can do {next.Name} ({JobNames(next.Jobs)}).");
                     return (next, job);
                 }).ConfigureAwait(false);
@@ -347,6 +347,7 @@ internal static class QuestionableTools
                         Svc.Log.Information($"[MCP] Questionable made no progress for {StallLimit.TotalMinutes:0} minutes; restarting it on quest {again} ({restarts}/{MaxRestarts}).");
                         await StopAfterFight(ct).ConfigureAwait(false);
                         await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+                        await BackToAcceptedJob(batch.FirstOrDefault(q => q.QuestionableId == again) ?? first, ct).ConfigureAwait(false);
                         await Game.Run(() => Ipc<string, bool>("StartQuest", again)).ConfigureAwait(false);
                         continue;
                     }
@@ -370,6 +371,7 @@ internal static class QuestionableTools
                     {
                         var again = s.Current is { Length: > 0 } cur && ids.Contains(cur) ? cur : first.QuestionableId;
                         Svc.Log.Information($"[MCP] Questionable stopped by itself; starting it again on quest {again}.");
+                        await BackToAcceptedJob(batch.FirstOrDefault(q => q.QuestionableId == again) ?? first, ct).ConfigureAwait(false);
                         await Game.Run(() => Ipc<string, bool>("StartQuest", again)).ConfigureAwait(false);
                         stall = new StallWatch(StallLimit);
                         continue;
@@ -682,6 +684,20 @@ internal static class QuestionableTools
         return Gearsets.All().Where(s => s.MissingItems == 0)
                        .Select(s => new JobOption(s.JobId, jobs.GetRowOrDefault(s.JobId) is { ExpArrayIndex: >= 0 and var i } && i < levels.Length ? levels[i] : 0))
                        .ToList();
+    }
+
+    /// <summary>
+    /// Switches back to the job an accepted quest was accepted on when the character is on another one (a craft step's Artisan
+    /// list switches crafters), before Questionable is started again: only that job can turn the quest in.
+    /// </summary>
+    private static async Task BackToAcceptedJob(QuestInfo quest, CancellationToken ct)
+    {
+        var (job, current) = await Game.Run(() => (Job: IsAccepted(quest) ? QuestJobs.ForAccepted(AcceptedJob(quest) ?? 0, Gearsets.CurrentJob(), GearsetJobs()) : Gearsets.CurrentJob(),
+                                                   Current: Gearsets.CurrentJob())).ConfigureAwait(false);
+        if (job == current) return;
+        Svc.Log.Information($"[MCP] {quest.Name} was accepted as {await Game.Run(() => JobAbbreviation(job)).ConfigureAwait(false)}; switching back before Questionable goes on.");
+        await StopAfterFight(ct).ConfigureAwait(false);
+        await Gearsets.Switch(await Game.Run(() => JobAbbreviation(job)).ConfigureAwait(false), ct).ConfigureAwait(false);
     }
 
     /// <summary>The job a quest was accepted on, or null when it is not accepted.</summary>

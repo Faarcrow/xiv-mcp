@@ -154,6 +154,13 @@ public static class QuestJobs
         return options.OrderByDescending(o => o.Level >= questLevel).ThenByDescending(o => o.Level).First().JobId;
     }
 
+    /// <summary>
+    /// The job to go on with an accepted quest: the one it was accepted on (the game only lets that job turn it in, and a craft
+    /// step can leave the character on another crafter), as long as it has a gearset; else the current one.
+    /// </summary>
+    public static uint ForAccepted(uint acceptedJob, uint current, IEnumerable<JobOption> gearsets) =>
+        acceptedJob != 0 && gearsets.Any(o => o.JobId == acceptedJob) ? acceptedJob : current;
+
     /// <summary>A gathering quest that was accepted as Fisher although Miner or Botanist may do it: Questionable cannot finish it.</summary>
     public static bool AcceptedAsFisherInstead(IReadOnlyCollection<uint> allowed, uint acceptedJob) =>
         acceptedJob == Fisher && GathersOnLand(allowed);

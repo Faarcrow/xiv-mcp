@@ -51,6 +51,8 @@ Two kinds of steps XIV MCP moves on from by itself, as if you pressed Questionab
 
 When Questionable stops making progress, for example after a teleport took you to the wrong place, XIV MCP starts it again: when you stand in the same spot for two minutes without talking, fighting, gathering, crafting, a cutscene or a zone change. When Questionable stops because vnavmesh found no path (often while still flying), XIV MCP waits until you have landed and starts it again. Questionable also often stops by itself after a step it hands off, such as a craft, a cutscene or a dialogue choice, although the quest goes on. When it has stood still for 10 seconds after such a step, XIV MCP starts it again. After three restarts in a row the job stops.
 
+A quest can only be turned in on the job it was accepted on. A class quest's craft step can leave you on another crafter, so before Questionable goes on with an accepted quest, XIV MCP switches back to that job.
+
 ## Allied society quests
 
 `do_tribe_dailies` does the day's quests for one allied society, to raise your reputation with them:

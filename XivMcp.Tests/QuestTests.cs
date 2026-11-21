@@ -137,6 +137,21 @@ public class QuestJobTests
     }
 
     [Fact]
+    public void An_accepted_quest_goes_back_to_the_job_it_was_accepted_on()
+    {
+        // A class quest's craft step left the character on another crafter (Artisan switches jobs): the turn-in needs the class.
+        Assert.Equal(Pld, QuestJobs.ForAccepted(acceptedJob: Pld, current: Blm, gearsets: Sets));
+        Assert.Equal(Blm, QuestJobs.ForAccepted(acceptedJob: Blm, current: Blm, gearsets: Sets));
+    }
+
+    [Fact]
+    public void An_accepted_quest_stays_on_the_current_job_when_the_accepting_job_is_unknown_or_has_no_gearset()
+    {
+        Assert.Equal(Blm, QuestJobs.ForAccepted(acceptedJob: 0, current: Blm, gearsets: Sets));
+        Assert.Equal(Blm, QuestJobs.ForAccepted(acceptedJob: 33, current: Blm, gearsets: Sets));
+    }
+
+    [Fact]
     public void The_current_job_stays_when_it_may_do_the_quest()
     {
         Assert.Equal(Blm, QuestJobs.Pick([Pld, Blm], Blm, Sets, 70));
