@@ -62,6 +62,16 @@ public static class MarketPurchase
         return chosen;
     }
 
+    /// <summary>Market board tax on purchases (5 %), rounded up like the game.</summary>
+    public static long WithTax(long gil) => gil + (gil * 5 + 99) / 100;
+
+    /// <summary>
+    /// The limit is meant per WANTED item: a purchase must not cost more than the wanted quantity at the limit (plus tax).
+    /// Listings are bought whole, so when only a big stack is left under the limit (20 at 480 for 4 wanted) the purchase would
+    /// cost several times that; it is refused instead of buying the surplus.
+    /// </summary>
+    public static bool TooDear(long total, int wanted, int maxPrice) => total > WithTax((long)wanted * maxPrice);
+
     /// <summary>
     /// Null when at least <paramref name="wanted"/> were bought. Otherwise what was bought and why the rest wasn't:
     /// <paramref name="nextPrice"/> is the cheapest listing left (above the limit), null when nothing else is listed.
