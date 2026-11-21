@@ -153,6 +153,9 @@ internal static class LongRunningTools
                 try
                 {
                     await WaitForPlugin(CraftGatherTools.GatherBuddy, ct).ConfigureAwait(false);
+                    // GatherBuddy only reports "Player is busy" while a window holds the character, e.g. the retainer list a retainer
+                    // plugin opened at the bell after the last step: free the character first.
+                    if (await Game.Run(() => Recovery.Occupied).ConfigureAwait(false)) await Recovery.Run(ct).ConfigureAwait(false);
                     await Game.Run(() => { Svc.PluginInterface.GetIpcSubscriber<bool, object>("GatherBuddyReborn.SetAutoGatherEnabled").InvokeAction(true); return true; }).ConfigureAwait(false);
                     await Task.Delay(5000, ct).ConfigureAwait(false);
                     var goal = until ?? targets;
@@ -196,6 +199,13 @@ internal static class LongRunningTools
                             await Task.Delay(5000, ct).ConfigureAwait(false);
                             stall.Reset(DateTime.UtcNow);
                             continue;
+                        }
+                        // A retainer plugin can open the retainer list while the character stands near a bell; never a gathering node.
+                        if (await Game.Run(() => Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedSummoningBell]).ConfigureAwait(false))
+                        {
+                            var freed = await Recovery.Run(ct).ConfigureAwait(false);
+                            if (freed.Actions.Count > 0) JobManager.Instance?.StepProgress("gather_until", $"recovery: {string.Join(" ", freed.Actions)}");
+                            stall.Reset(DateTime.UtcNow);
                         }
                         if (stall.Observe(DateTime.UtcNow, state.Have, state.Activity))
                         {
