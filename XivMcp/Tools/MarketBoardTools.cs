@@ -92,6 +92,13 @@ internal static class MarketBoardTools
         }
         var total = plan.Sum(p => (long)p.UnitPrice * p.Quantity + p.Tax);
         var planned = plan.Sum(p => (long)p.Quantity);
+        // With full bags the game still takes the gil, and the items don't arrive in the bags.
+        var (slotsNeeded, slotsFree) = await Game.Run(() => (Items.SlotsNeeded(item.RowId, (int)Math.Min(planned, 9999)), Items.FreeBagSlots())).ConfigureAwait(false);
+        if (slotsNeeded > slotsFree)
+        {
+            await Game.Run(CloseMarketBoard).ConfigureAwait(false);
+            throw new ToolException($"{planned} {name} need {slotsNeeded} free bag slot(s); only {slotsFree} are free. Make room first (sell or store items), then buy.");
+        }
         if (MarketPurchase.TooDear(total, quantity, maxPrice))
         {
             await Game.Run(CloseMarketBoard).ConfigureAwait(false);
