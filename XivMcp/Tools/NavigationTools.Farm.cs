@@ -203,6 +203,14 @@ internal static partial class NavigationTools
             }
             finally
             {
+                // Monsters still attacking keep the character in combat for good once RotationSolver is off (no teleport, world
+                // visit or job change): fight on until combat ends, for at most a minute, then switch it off.
+                await Game.Run(() => { StopMoving(); return true; }).ConfigureAwait(false);
+                for (var i = 0; i < 60 && await Game.Run(() => Svc.Objects.LocalPlayer is { IsDead: false } && Svc.Condition[ConditionFlag.InCombat]).ConfigureAwait(false); i++)
+                {
+                    if (i % 3 == 0) await Game.Run(() => { Svc.Commands.ProcessCommand("/rotation Auto"); return true; }).ConfigureAwait(false);
+                    await Task.Delay(1000, CancellationToken.None).ConfigureAwait(false);
+                }
                 await Game.Run(() =>
                 {
                     Svc.Commands.ProcessCommand("/rotation Off");
