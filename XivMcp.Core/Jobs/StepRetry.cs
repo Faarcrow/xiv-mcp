@@ -22,6 +22,7 @@ public static class StepRetry
         "loading a zone",
         "did not send the listings",
         "The market board did not open",
+        "Can't log out in combat",
         "No character is currently logged in",
         "Can't change gear right now",
         "The character is casting",
