@@ -89,7 +89,9 @@ internal static class CraftPlanTools
                     CraftGatherTools.EnsureArtisanIdle();
                     var full = CraftPlanner.Build(targets, options, retainers);
                     var batch = full.Batches.FirstOrDefault(b => b.Index == batchIndex)
-                                ?? throw new ToolException($"The plan has {full.Batches.Count} batch(es); there is no batch {batchIndex}.");
+                                ?? throw new ToolException(full.Batches.Count == 0
+                                    ? $"Not even part of this project fits in the bags: it needs {full.PeakSlotsNeeded} free bag slots at its peak, {full.FreeSlots} are free. Free up space first."
+                                    : $"The plan has {full.Batches.Count} batch(es); there is no batch {batchIndex}.");
                     return (Plan: full.Batches.Count == 1 ? full : CraftPlanner.Build(batch.Targets, options, retainers), Total: full.Batches.Count);
                 }).ConfigureAwait(false);
                 var blocking = plan.Steps.Where(s => s.Problem is not null).ToList();
