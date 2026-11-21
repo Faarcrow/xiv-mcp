@@ -131,33 +131,34 @@ internal static partial class NavigationTools
                             var pickedMob = fighting;
                             var inCombat = view.InCombat;
                             var sendAuto = DateTime.UtcNow - lastAuto > TimeSpan.FromSeconds(3);
-                            var (autoSent, walkingDistance) = await Game.Run(() =>
+                            var (autoSent, walkingDistance, inRange) = await Game.Run(() =>
                             {
                                 // The monster we picked: the game doesn't take a target that is far away, so keep setting it
                                 // while walking there, and fall back to the current target once a fight is on.
                                 var mob = pickedMob is { } id ? Svc.Objects.OfType<IBattleNpc>().FirstOrDefault(o => o.GameObjectId == id) : null;
                                 var t = mob ?? Svc.Targets.Target;
-                                if (t is null) return (false, (float?)null);
+                                if (t is null) return (false, (float?)null, false);
                                 if (mob is not null && Svc.Targets.Target?.GameObjectId != mob.GameObjectId) Svc.Targets.Target = mob;
                                 if (Game.DistanceToPlayer(t.Position) is { } d && d > range + t.HitboxRadius)
                                 {
                                     // Pathfinding again every half second would restart it each time and never move.
                                     if (!PathRunning) MoveCloseTo(t.Position, range + t.HitboxRadius - 0.5f);
-                                    return (false, (float?)d);
+                                    return (false, (float?)d, false);
                                 }
                                 if (PathRunning) StopMoving();
+                                var here = Game.DistanceToPlayer(t.Position);
                                 // RotationSolver switches itself off after a fight, so the next monster is never attacked: in range
                                 // and not fighting yet, switch it on again (every few seconds, not every tick).
-                                if (!inCombat && sendAuto) { Svc.Commands.ProcessCommand("/rotation Auto"); return (true, (float?)null); }
-                                return (false, (float?)null);
+                                if (!inCombat && sendAuto) { Svc.Commands.ProcessCommand("/rotation Auto"); return (true, here, true); }
+                                return (false, here, true);
                             }).ConfigureAwait(false);
                             if (autoSent) lastAuto = DateTime.UtcNow;
                             // Arrived by mount (after flying over an obstacle): get off, nothing can be cast from the saddle.
-                            if (walkingDistance is null && await Game.Run(() => Svc.Condition[ConditionFlag.Mounted]).ConfigureAwait(false))
+                            if (inRange && await Game.Run(() => Svc.Condition[ConditionFlag.Mounted]).ConfigureAwait(false))
                                 await TryGetOff(spawn, steps, ct).ConfigureAwait(false);
 
-                            // Walking up to a monster we don't fight yet but not getting closer (behind trees, a cliff, no line of
-                            // sight): give it up for a while and take another one.
+                            // Walking up to a monster we don't fight yet but not getting closer (behind trees, a cliff), or standing in
+                            // range while no fight starts (no line of sight, e.g. it stands on a ledge): fly there, then give it up.
                             if (walkingDistance is { } dist && !inCombat && pickedMob is { } walkingTo)
                             {
                                 if (approachFor != walkingTo) { approach = new XivMcp.Maps.Approach(UnreachableMobs.StallWindow); approachFor = walkingTo; }
@@ -170,7 +171,7 @@ internal static partial class NavigationTools
                                     if (flyTo is { } pos)
                                     {
                                         await Game.Run(() => { StopMoving(); return true; }).ConfigureAwait(false);
-                                        await StartPath(pos, range, steps, ct, forceMount: true).ConfigureAwait(false);
+                                        await StartPath(pos, inRange ? 3f : range, steps, ct, forceMount: true).ConfigureAwait(false);
                                         steps.Add($"Could not walk up to a {target.Name} {dist:0} yalms away; flying there.");
                                     }
                                 }
