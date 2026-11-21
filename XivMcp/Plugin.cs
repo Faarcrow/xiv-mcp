@@ -152,11 +152,19 @@ public sealed class Plugin : IDalamudPlugin
         foreach (var e in AuditFile.ReadRecent(500)) audit.AddRestored(e);
         gate = new XivMcp.Permissions.ToolGate(policyStore, new ConsentApprovalGate(), probe, audit, notifier);
 
-        jobs = new JobManager(registry, gate);
+        jobs = new JobManager(registry, gate, () => roster.CurrentAccount);
         caches.Add(jobs);
         Approvals.AbandonWaiting(); // questions from before a crash are gone and can't be answered any more
         foreach (var t in tools) t.ParsedSchema(); // logs any tool whose input schema is not valid JSON, right at startup
-        Server = new McpServer(registry, gate, Config, caches);
+        Server = new McpServer(registry, gate, Config, caches, () => roster.CurrentAccount);
+        // Several game clients on one PC: each account has its own port and its own jobs. The roster raises these under its lock,
+        // so the handlers run on the thread pool (the job manager reads the account under its own lock).
+        roster.AccountChanged += _ => { if (Config.ServerEnabled) Server.OnAccountChanged(); };
+        roster.AccountsMerged += (from, to) => System.Threading.Tasks.Task.Run(() =>
+        {
+            PortStore.Rename(from, to);
+            jobs.RenameOwner(from, to);
+        });
         pluginApi = new XivMcp.Api.PluginApi(registry, policyStore, gate, () => jobs);
         decisions = new PluginDecisions(registry, policyStore, gate, () => Server.NotifyIfToolsChanged());
         var announcer = new RegistrationNotifier(decisions, policyStore, id => configWindow?.ShowThirdParty(id));

@@ -53,6 +53,7 @@ Tiles marked **Coming soon** are greyed out: their setup has not been tested yet
 The **Server & access token** section at the bottom of the **Connect** tab holds the server settings:
 
 - **The address** is `http://localhost:37521/mcp`. It only answers on your own PC. You can change the port there and click **Apply & restart**; then set up your apps again.
+- **Several game clients on one PC** each get a port of their own, by game account: the first account XIV MCP sees uses the port you set, the next one the next free port (37522, then 37523 ...). An account keeps its port across restarts and character switches, so set up one app entry per account with its address. The **Connect** tab shows the address of the client you are in. On the title screen, before the account is known, a client takes the first free port and moves to its account's port once you log in. Background jobs belong to the account that started them: each client only lists and runs its own.
 - **The access token** is created once, on first start, and saved with the plugin settings. It stays the same across game restarts until you generate a new one with the arrows button next to it. After that, set up every app again.
 - **Require access token** is on by default. Without a token, any program on your PC can use the server, so leave it on unless an app cannot send one.
 - **To cut off every app at once,** see [Removing XIV MCP from an app](/docs/user/connect/removing#every-app-at-once).

@@ -52,6 +52,12 @@ internal sealed class CharacterRoster : IDisposable
         lock (sync) return characters.Values.OrderBy(c => c.DataCenter).ThenBy(c => c.CurrentWorld).ThenBy(c => c.Slot).ToList();
     }
 
+    /// <summary>The session's account became known or changed (key). Raised on the framework thread; handlers must not block.</summary>
+    public event Action<string>? AccountChanged;
+
+    /// <summary>Two account keys turned out to be the same account (from, to).</summary>
+    public event Action<string, string>? AccountsMerged;
+
     /// <summary>The account key of the account in use this session, if known.</summary>
     public string? CurrentAccount
     {
@@ -142,12 +148,16 @@ internal sealed class CharacterRoster : IDisposable
         if (sessionKey is not null) keys.Add(sessionKey);
         var key = keys.OrderBy(k => k, StringComparer.Ordinal).FirstOrDefault() ?? Guid.NewGuid().ToString("N");
         foreach (var other in keys.Where(k => k != key))
+        {
             foreach (var c in characters.Values.Where(c => c.AccountKey == other).ToList())
                 characters[c.ContentId] = c with { AccountKey = key };
+            AccountsMerged?.Invoke(other, key);
+        }
         if (sessionKey != key)
         {
             sessionKey = key;
             try { File.WriteAllText(sessionFile, $"{GameSession}|{key}"); } catch { /* not critical */ }
+            AccountChanged?.Invoke(key);
         }
         return key;
     }

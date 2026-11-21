@@ -46,6 +46,9 @@ internal sealed class JobManager : IDisposable, ICache
         public string Id { get; set; } = "";
         public string Name { get; set; } = "";
         public string? Client { get; set; }
+
+        /// <summary>The game account whose client runs the job (several clients on one PC share jobs.json); none: any client.</summary>
+        public string? Owner { get; set; }
         public JobState State { get; set; } = JobState.Queued;
         public string? Reason { get; set; }
         public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
@@ -80,14 +83,20 @@ internal sealed class JobManager : IDisposable, ICache
 
     private readonly XivMcp.Permissions.ToolGate gate;
 
-    public JobManager(ToolRegistry tools, XivMcp.Permissions.ToolGate gate)
+    private readonly Func<string?> account;
+
+    /// <summary>A job this client shows and runs: its account's, or one without an owner.</summary>
+    private bool Mine(Job j) => j.Owner is null || j.Owner == account();
+
+    public JobManager(ToolRegistry tools, XivMcp.Permissions.ToolGate gate, Func<string?> account)
     {
         this.tools = tools;
         this.gate = gate;
+        this.account = account;
         try { jobs = File.Exists(file) ? JsonSerializer.Deserialize<List<Job>>(File.ReadAllText(file), JsonOptions) ?? [] : []; }
         catch (Exception ex) { Svc.Log.Warning($"[MCP] jobs.json unreadable, starting empty: {ex.Message}"); jobs = []; }
         // Whatever was running when the plugin stopped resumes only when someone says so.
-        foreach (var j in jobs.Where(j => j.State is JobState.Running or JobState.Queued))
+        foreach (var j in jobs.Where(j => Mine(j) && j.State is JobState.Running or JobState.Queued))
         {
             j.State = JobState.Paused;
             j.Reason = "Paused because the plugin was reloaded; resume_job to continue.";
@@ -103,7 +112,7 @@ internal sealed class JobManager : IDisposable, ICache
         stepCts?.Cancel();
         lock (sync)
         {
-            foreach (var j in jobs.Where(j => j.State == JobState.Running))
+            foreach (var j in jobs.Where(j => Mine(j) && j.State == JobState.Running))
             {
                 j.State = JobState.Paused;
                 j.Reason = "Paused because the plugin was unloaded; resume_job to continue.";
@@ -172,7 +181,7 @@ internal sealed class JobManager : IDisposable, ICache
     public Job Start(string name, List<Step> steps, string? client)
     {
         Validate(steps);
-        var job = new Job { Id = NewId(), Name = name, Client = client, Steps = steps };
+        var job = new Job { Id = NewId(), Name = name, Client = client, Owner = account(), Steps = steps };
         lock (sync)
         {
             jobs.Add(job);
@@ -192,7 +201,7 @@ internal sealed class JobManager : IDisposable, ICache
     /// </summary>
     public List<Job> All()
     {
-        lock (sync) return Copy(jobs.OrderByDescending(j => j.CreatedUtc));
+        lock (sync) return Copy(jobs.Where(Mine).OrderByDescending(j => j.CreatedUtc));
     }
 
     /// <summary>
@@ -206,7 +215,7 @@ internal sealed class JobManager : IDisposable, ICache
             var v = Interlocked.Read(ref version);
             if (uiSnapshot is null || uiSnapshotVersion != v)
             {
-                uiSnapshot = Copy(jobs.OrderByDescending(j => j.CreatedUtc));
+                uiSnapshot = Copy(jobs.Where(Mine).OrderByDescending(j => j.CreatedUtc));
                 uiSnapshotVersion = v;
             }
             return uiSnapshot;
@@ -222,7 +231,7 @@ internal sealed class JobManager : IDisposable, ICache
     /// <summary>True while a job waits to run or runs (cheap: no copies).</summary>
     public bool AnyActive
     {
-        get { lock (sync) return jobs.Any(j => j.State is JobState.Queued or JobState.Running); }
+        get { lock (sync) return jobs.Any(j => Mine(j) && j.State is JobState.Queued or JobState.Running); }
     }
 
     /// <summary>Deep copies (JSON round trip), so readers never share objects with the runner.</summary>
@@ -330,7 +339,7 @@ internal sealed class JobManager : IDisposable, ICache
             JsonObject args;
             lock (sync)
             {
-                job = jobs.Where(j => j.State is JobState.Queued or JobState.Running).OrderBy(j => j.CreatedUtc).FirstOrDefault();
+                job = jobs.Where(j => Mine(j) && j.State is JobState.Queued or JobState.Running).OrderBy(j => j.CreatedUtc).FirstOrDefault();
                 if (job is null) continue;
                 step = job.Current;
                 if (step is null) { Complete(job); Changed(); continue; }
@@ -448,9 +457,9 @@ internal sealed class JobManager : IDisposable, ICache
     }
 
     private Job Find(string id) =>
-        jobs.FirstOrDefault(j => j.Id.Equals(id, StringComparison.OrdinalIgnoreCase))
-        ?? jobs.Where(j => j.Name.Equals(id, StringComparison.OrdinalIgnoreCase) && !j.Finished).OrderByDescending(j => j.CreatedUtc).FirstOrDefault()
-        ?? jobs.Where(j => j.Name.Equals(id, StringComparison.OrdinalIgnoreCase)).OrderByDescending(j => j.CreatedUtc).FirstOrDefault()
+        jobs.Where(Mine).FirstOrDefault(j => j.Id.Equals(id, StringComparison.OrdinalIgnoreCase))
+        ?? jobs.Where(j => Mine(j) && j.Name.Equals(id, StringComparison.OrdinalIgnoreCase) && !j.Finished).OrderByDescending(j => j.CreatedUtc).FirstOrDefault()
+        ?? jobs.Where(j => Mine(j) && j.Name.Equals(id, StringComparison.OrdinalIgnoreCase)).OrderByDescending(j => j.CreatedUtc).FirstOrDefault()
         ?? throw new ToolException($"No job '{id}'. Use list_jobs.");
 
     private static void AddLog(Job job, string line)
@@ -469,10 +478,36 @@ internal sealed class JobManager : IDisposable, ICache
         Updated?.Invoke(this);
     }
 
+    /// <summary>
+    /// Writes this client's jobs and keeps the other clients' (several game clients on one PC share the file) as the file has them now,
+    /// then takes their current state into memory too. Call under the lock.
+    /// </summary>
     private void Save()
     {
-        try { File.WriteAllText(file, JsonSerializer.Serialize(jobs, JsonOptions)); }
+        try
+        {
+            SharedFile.Locked(file, () =>
+            {
+                List<Job> onDisk = [];
+                try { if (File.Exists(file)) onDisk = JsonSerializer.Deserialize<List<Job>>(File.ReadAllText(file), JsonOptions) ?? []; }
+                catch { /* unreadable: ours replace it */ }
+                var merged = XivMcp.Connect.SharedList.Merge(onDisk, jobs, j => j.Id, Mine);
+                File.WriteAllText(file, JsonSerializer.Serialize(merged, JsonOptions));
+                jobs.RemoveAll(j => !Mine(j));
+                jobs.AddRange(merged.Where(j => !Mine(j)));
+            });
+        }
         catch (Exception ex) { Svc.Log.Warning($"[MCP] Could not save jobs: {ex.Message}"); }
+    }
+
+    /// <summary>Two account keys turned out to be one account: its jobs follow the surviving key.</summary>
+    public void RenameOwner(string from, string to)
+    {
+        lock (sync)
+        {
+            foreach (var j in jobs.Where(j => j.Owner == from)) j.Owner = to;
+            Save();
+        }
     }
 
     private static JsonNode? ToNode(object? result)
@@ -505,13 +540,13 @@ internal sealed class JobManager : IDisposable, ICache
     public IEnumerable<CacheEntryStatus> Entries()
     {
         lock (sync)
-            return jobs.Where(j => !j.Finished)
+            return jobs.Where(j => Mine(j) && !j.Finished)
                 .Select(j => new CacheEntryStatus("jobs", $"{j.Name} ({j.State.ToString().ToLowerInvariant()})", j.UpdatedUtc, "updates live", true)).ToList();
     }
 
     public object Read()
     {
-        lock (sync) return jobs.Select(Describe).ToList();
+        lock (sync) return jobs.Where(Mine).Select(Describe).ToList();
     }
 
     /// <summary>

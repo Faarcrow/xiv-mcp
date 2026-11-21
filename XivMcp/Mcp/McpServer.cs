@@ -53,10 +53,14 @@ public sealed partial class McpServer : IDisposable
     /// <summary>The tool calls running right now, for the activity overlay.</summary>
     internal XivMcp.Ui.ActivityTracker Activity { get; } = new();
 
-    internal McpServer(ToolRegistry tools, XivMcp.Permissions.ToolGate gate, Configuration config, Util.CacheRegistry caches)
+    /// <summary>The game account of this client, once known (each account has its own port; see <see cref="XivMcp.Connect.PortPlan"/>).</summary>
+    private readonly Func<string?> account;
+
+    internal McpServer(ToolRegistry tools, XivMcp.Permissions.ToolGate gate, Configuration config, Util.CacheRegistry caches, Func<string?> account)
     {
         this.tools = tools;
         this.config = config;
+        this.account = account;
         this.caches = caches;
         this.gate = gate;
         caches.Updated += OnCacheUpdated;
@@ -68,16 +72,43 @@ public sealed partial class McpServer : IDisposable
 
     public IReadOnlyCollection<McpTool> Tools => tools.All;
 
-    public string Endpoint => $"http://localhost:{config.Port}/mcp";
+    /// <summary>The port the server listens on: the account's (several clients on one PC each have one), else the first free one.</summary>
+    public int Port { get; private set; }
+
+    public string Endpoint => $"http://localhost:{(Port > 0 ? Port : config.Port)}/mcp";
+
+    /// <summary>The port this client should use now (ports.json is read and, for a new account, extended).</summary>
+    private int WantedPort()
+    {
+        bool Free(int p) => p == Port && IsRunning || Util.PortStore.IsFree(p);
+        return account() is { } key ? Util.PortStore.ForAccount(key, config.Port, Free) : XivMcp.Connect.PortPlan.BeforeLogin(config.Port, Free);
+    }
+
+    /// <summary>The account became known (or changed): move to its port if that differs. MCP apps reconnect on their own.</summary>
+    public void OnAccountChanged()
+    {
+        _ = System.Threading.Tasks.Task.Run(() =>
+        {
+            try
+            {
+                var wanted = WantedPort();
+                if (wanted == Port && IsRunning) return;
+                Svc.Log.Information($"MCP server moves to port {wanted} for this game account.");
+                Start();
+            }
+            catch (Exception ex) { Svc.Log.Warning($"[MCP] Could not move the server to the account's port: {ex.Message}"); }
+        });
+    }
 
     public void Start()
     {
         Stop();
         try
         {
+            Port = WantedPort();
             listener = new HttpListener();
             // "localhost" prefixes do not require a URL ACL / admin rights and never bind external interfaces.
-            listener.Prefixes.Add($"http://localhost:{config.Port}/");
+            listener.Prefixes.Add($"http://localhost:{Port}/");
             listener.Start();
             cts = new CancellationTokenSource();
             _ = Task.Run(() => AcceptLoop(listener, cts.Token));

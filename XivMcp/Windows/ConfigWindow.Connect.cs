@@ -504,11 +504,14 @@ internal sealed partial class ConfigWindow
         ImGui.SameLine();
         if (ImGuiComponents.IconButtonWithText(FontAwesomeIcon.Redo, portInput == config.Port ? "Restart server" : "Apply & restart"))
         {
+            if (portInput != config.Port) PortStore.Reset(); // accounts get their ports afresh from the new first port
             config.Port = portInput;
             config.Save();
             if (config.ServerEnabled) server.Start();
         }
         ImGui.TextColored(Muted, $"Address: {endpoint}  ·  only reachable from this PC.");
+        if (server.Port > 0 && server.Port != config.Port)
+            ImGui.TextColored(Muted, $"Another game client on this PC uses port {config.Port}: this one's game account listens on {server.Port}.");
         if (portInput != config.Port) ImGui.TextColored(Amber, "Changing the port means setting up your apps again.");
 
         ImGui.Spacing();
