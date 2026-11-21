@@ -482,6 +482,9 @@ internal static class CraftGatherTools
                 lists.Add(list);
             }
             if (name is not null) list["Name"] = name;
+            // A list that is started again (after a pause, a repair stop, a failed step) must not craft everything once more:
+            // with "skip if enough" Artisan leaves out what the bags already hold.
+            list["SkipIfEnough"] = true;
             var target = (JsonArray)list["Recipes"]!;
             foreach (var (recipeId, quantity) in recipes)
             {

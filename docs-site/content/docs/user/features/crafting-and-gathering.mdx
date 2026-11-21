@@ -9,7 +9,7 @@ Planning works on its own. Crafting and gathering go through **Artisan** and **G
 | Tool | What it does | Module |
 |---|---|---|
 | `plan_craft` | Plans a project: recipe tree, crafting order, stock from bags and retainers, where to get missing materials, bag space and batches, and the stats Artisan will craft with | Game data |
-| `get_crafting_lists` / `set_crafting_list` / `delete_crafting_list` | Artisan's lists and state; creates, edits or deletes lists | Artisan |
+| `get_crafting_lists` / `set_crafting_list` / `delete_crafting_list` | Artisan's lists and state; creates, edits or deletes lists (lists XIV MCP writes skip what your bags already hold, so a list started again after a stop doesn't craft everything twice) | Artisan |
 | `craft_item` / `crafting_control` | Crafts an item a number of times; starts, pauses, resumes or stops a list | Artisan |
 | `prepare_craft_plan` | Creates the Artisan list in the right order and works out each recipe's steps ahead of time with **Raphael** (the crafting solver built into Artisan), with the exact stats Artisan will use | Artisan |
 | `run_crafting_list` | Runs an Artisan list to the end and reports what was crafted per recipe. Stops and fails when Artisan gets stuck | Artisan |
