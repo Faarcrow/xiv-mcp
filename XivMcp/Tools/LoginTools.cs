@@ -190,13 +190,36 @@ internal static class LoginTools
                     if (!automatic) XivMcp.Util.PlayerGuide.Ask(XivMcp.Maps.PlayerGuidance.VisitWorld(target.Name, target.Dc ?? "", target.SameDc));
 
                     var deadline = DateTime.UtcNow.AddSeconds(args.Int("timeout_seconds", 600, 30, 1800));
+                    var sentAt = DateTime.UtcNow;
+                    var attempts = 1;
                     while (DateTime.UtcNow < deadline)
                     {
                         await Task.Delay(2000, ct).ConfigureAwait(false);
-                        var state = await Game.Run(() => (In: Svc.ClientState.IsLoggedIn && Svc.Objects.LocalPlayer is not null, World: Svc.PlayerState.CurrentWorld.RowId,
-                                                          Busy: LifestreamBusy())).ConfigureAwait(false);
-                        if (state.In && state.World == target.RowId && !state.Busy)
-                            return new { arrived = target.Name, dataCenter = target.Dc, travelledBy = automatic ? "plugin" : "player" };
+                        var state = await Game.Run(() => new XivMcp.Maps.WorldVisitState(
+                            Svc.ClientState.IsLoggedIn && Svc.Objects.LocalPlayer is not null,
+                            Svc.PlayerState.CurrentWorld.RowId == target.RowId,
+                            LifestreamBusy(),
+                            Svc.Condition[ConditionFlag.BetweenAreas] || Svc.Condition[ConditionFlag.BetweenAreas51],
+                            DateTime.UtcNow - sentAt, attempts)).ConfigureAwait(false);
+                        if (!automatic)
+                        {
+                            if (state.LoggedIn && state.OnTarget) return new { arrived = target.Name, dataCenter = target.Dc, travelledBy = "player" };
+                            continue;
+                        }
+                        switch (XivMcp.Maps.WorldVisit.Next(state))
+                        {
+                            case XivMcp.Maps.WorldVisitAction.Arrived:
+                                return new { arrived = target.Name, dataCenter = target.Dc, travelledBy = "plugin", attempts };
+                            case XivMcp.Maps.WorldVisitAction.GiveUp:
+                                throw new ToolException($"The travel plugin stopped {attempts} times without reaching {target.Name}.");
+                            case XivMcp.Maps.WorldVisitAction.Retry:
+                                // It gave up without travelling (e.g. with the aetheryte's menu left open): free the character and send it again.
+                                await Recovery.Run(ct).ConfigureAwait(false);
+                                await Game.Run(() => { Svc.PluginInterface.GetIpcSubscriber<string, object>("Lifestream.ExecuteCommand").InvokeAction(target.Name); return true; }).ConfigureAwait(false);
+                                sentAt = DateTime.UtcNow;
+                                attempts++;
+                                break;
+                        }
                     }
                     throw new ToolException(automatic
                         ? $"Not on {target.Name} after the timeout; the travel plugin may still be travelling or queued."
