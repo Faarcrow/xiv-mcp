@@ -267,6 +267,10 @@ internal static class LongRunningTools
                 var stallAfter = TimeSpan.FromMinutes(args.Int("stall_minutes", 5, 0, 120));
                 // Crafting is refused while a gathering node is open (e.g. right after a gather_until step).
                 await LeaveGatheringNode(ct).ConfigureAwait(false);
+                // Right after a fight (a farm_monster_drops step) the game refuses the job change Artisan needs ("unable to change
+                // classes or jobs at this time"), and Artisan then pauses its list for good: wait for the combat flag to clear.
+                for (var i = 0; i < 90 && await Game.Run(() => Svc.Condition[ConditionFlag.InCombat]).ConfigureAwait(false); i++)
+                    await Task.Delay(1000, ct).ConfigureAwait(false);
                 var (listId, listName, current) = await Game.RunLoggedIn(() =>
                 {
                     CraftGatherTools.RequireArtisan();
