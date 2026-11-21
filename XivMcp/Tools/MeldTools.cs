@@ -284,7 +284,13 @@ internal static class MeldTools
 
         // The meld dialog: read the real chance, then Meld.
         if (!await WaitFor(() => GameWindows.Ready("MateriaAttachDialog") && Svc.Condition[ConditionFlag.MeldingMateria], TimeSpan.FromSeconds(5), ct).ConfigureAwait(false))
+        {
+            // Another plugin (e.g. an auto-confirm for the meld dialog) may have melded before the dialog was seen: the item tells.
+            await WaitFor(() => !Svc.Condition[ConditionFlag.MeldingMateria], TimeSpan.FromSeconds(12), ct).ConfigureAwait(false);
+            var nowCount = await Game.Run(() => MateriaCountNow(target)).ConfigureAwait(false);
+            if (nowCount > before) return (true, step.ChancePercent);
             throw new ToolException("The meld dialog did not open.");
+        }
         var rate = await Game.Run(() => { unsafe { var d = (AtkUnitBase*)RetainerUi.Ptr("MateriaAttachDialog").Address; return d != null && d->AtkValuesCount > 41 ? d->AtkValues[41].Int : step.ChancePercent; } }).ConfigureAwait(false);
         await Game.Run(() => { unsafe { RetainerUi.Fire((AtkUnitBase*)RetainerUi.Ptr("MateriaAttachDialog").Address, true, 0, 0, 1); } return true; }).ConfigureAwait(false);
 
