@@ -55,6 +55,38 @@ public class VendorSaleTests
         Assert.True(VendorSale.IsUntradableWarning(warning, UntradableWarning));
     }
 
+    private static readonly SlotContent Planned = new(ItemId: 5057, Hq: false, Quantity: 40);
+
+    [Fact]
+    public void A_slot_that_still_holds_the_planned_stack_is_sold()
+    {
+        Assert.Null(VendorSale.Changed(Planned, new SlotContent(5057, false, 40)));
+    }
+
+    [Fact]
+    public void A_slot_the_player_changed_meanwhile_is_left_alone()
+    {
+        // The approval prompt can stay open for minutes: the player may sort, move, use or split the stack meanwhile.
+        Assert.Equal("the slot is empty now", VendorSale.Changed(Planned, null));
+        Assert.Equal("the slot is empty now", VendorSale.Changed(Planned, new SlotContent(0, false, 0)));
+        Assert.Equal("another item is in the slot now", VendorSale.Changed(Planned, new SlotContent(5058, false, 40)));
+        Assert.Equal("the slot holds the high-quality one now", VendorSale.Changed(Planned, new SlotContent(5057, true, 40)));
+        Assert.Equal("the slot holds the normal-quality one now", VendorSale.Changed(Planned with { Hq = true }, new SlotContent(5057, false, 40)));
+        Assert.Equal("the slot holds 12 now, not 40", VendorSale.Changed(Planned, new SlotContent(5057, false, 12)));
+        Assert.Equal("the slot holds 99 now, not 40", VendorSale.Changed(Planned, new SlotContent(5057, false, 99)));
+    }
+
+    [Fact]
+    public void The_untradable_warning_is_confirmed_only_for_an_approved_item_still_in_its_slot()
+    {
+        var approved = new HashSet<uint> { 5057 };
+        Assert.True(VendorSale.MayConfirmUntradable(Planned, Planned, approved));
+        Assert.False(VendorSale.MayConfirmUntradable(Planned, Planned, new HashSet<uint>()));
+        // Another untradable item moved into the slot: its warning was never approved.
+        Assert.False(VendorSale.MayConfirmUntradable(Planned, new SlotContent(6000, false, 40), approved));
+        Assert.False(VendorSale.MayConfirmUntradable(Planned, null, approved));
+    }
+
     [Fact]
     public void Other_questions_are_answered_no()
     {
