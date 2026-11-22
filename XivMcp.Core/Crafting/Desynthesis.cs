@@ -10,6 +10,12 @@ public sealed record DesynthStep(int Stack, int Count, bool Bulk);
 /// <summary>What an item is like, as far as desynthesizing it from the bags goes.</summary>
 public sealed record DesynthItem(bool Desynthesizable, bool Unique, bool Untradable, bool Collectable, bool Melded, bool InGearset, bool Glamoured);
 
+/// <summary>How many of an item a desynthesis call takes, <paramref name="Hq"/> of them HQ.</summary>
+public sealed record DesynthCount(string Name, int Count, int Hq);
+
+/// <summary>What the player is asked in game: a title, and one line per item.</summary>
+public sealed record DesynthApproval(string Title, IReadOnlyList<string> Details);
+
 /// <summary>Which items to desynthesize, and how many from which stacks.</summary>
 public static class Desynthesis
 {
@@ -50,4 +56,24 @@ public static class Desynthesis
         { Collectable: true } => "It is a collectable; desynthesize it by hand if you mean to.",
         _ => null,
     };
+
+    /// <summary>
+    /// Why the list can't go as it is, naming the first item listed more than once, or null. Two entries for one item would plan
+    /// the same stacks twice, and the second would find them changed.
+    /// </summary>
+    public static string? ListedTwice(IEnumerable<(uint ItemId, string Name)> items) =>
+        items.GroupBy(i => i.ItemId).FirstOrDefault(g => g.Count() > 1) is { } twice
+            ? $"{twice.First().Name} is listed more than once; list each item once."
+            : null;
+
+    /// <summary>
+    /// The in-game question for the whole list. One item is named in the title; several are counted there, and each has its own
+    /// line. How many are HQ is told, since those are often worth more.
+    /// </summary>
+    public static DesynthApproval Approval(IReadOnlyList<DesynthCount> items)
+    {
+        var details = items.Select(i => $"{i.Count} × {i.Name}{(i.Hq == 0 ? "" : i.Hq == i.Count ? " (HQ)" : $" ({i.Hq} of them HQ)")}").ToList();
+        var title = items.Count == 1 ? $"Desynthesize {details[0]}?" : $"Desynthesize {items.Sum(i => i.Count)} items?";
+        return new DesynthApproval(title, details);
+    }
 }

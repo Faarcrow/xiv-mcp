@@ -99,4 +99,34 @@ public class DesynthesisTests
     {
         Assert.Equal("It is glamoured; desynthesize it by hand if you mean to.", Desynthesis.Refusal(Fish with { Glamoured = true }));
     }
+
+    [Fact]
+    public void One_item_is_asked_by_name()
+    {
+        var approval = Desynthesis.Approval([new DesynthCount("Cobalt Ingot", 5, 0)]);
+        Assert.Equal("Desynthesize 5 × Cobalt Ingot?", approval.Title);
+        Assert.Equal(["5 × Cobalt Ingot"], approval.Details);
+    }
+
+    [Fact]
+    public void Several_items_are_asked_by_their_total()
+    {
+        var approval = Desynthesis.Approval([new DesynthCount("Cobalt Ingot", 5, 0), new DesynthCount("Rarefied Lumber", 3, 1)]);
+        Assert.Equal("Desynthesize 8 items?", approval.Title);
+        Assert.Equal(["5 × Cobalt Ingot", "3 × Rarefied Lumber (1 of them HQ)"], approval.Details);
+    }
+
+    [Fact]
+    public void Items_all_HQ_say_so_once()
+    {
+        Assert.Equal(["4 × Mythrite Ingot (HQ)"], Desynthesis.Approval([new DesynthCount("Mythrite Ingot", 4, 4)]).Details);
+    }
+
+    [Fact]
+    public void An_item_listed_twice_is_named()
+    {
+        Assert.Equal("Cobalt Ingot is listed more than once; list each item once.",
+            Desynthesis.ListedTwice([(5057u, "Cobalt Ingot"), (5058u, "Mythrite Ingot"), (5057u, "Cobalt Ingot")]));
+        Assert.Null(Desynthesis.ListedTwice([(5057u, "Cobalt Ingot"), (5058u, "Mythrite Ingot")]));
+    }
 }

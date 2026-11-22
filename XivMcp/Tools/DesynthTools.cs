@@ -106,8 +106,8 @@ internal static class DesynthTools
                         EnsureCanDesynth();
                         var gearsets = Gearsets.ItemIds();
                         var resolved = wanted.Select(w => (Item: Items.Resolve(w.Query), w.Quantity, w.Keep, w.Hq)).ToList();
-                        if (resolved.GroupBy(r => r.Item.RowId).FirstOrDefault(g => g.Count() > 1) is { } twice)
-                            throw new ToolException($"{twice.First().Item.Name.ExtractText()} is listed more than once; list each item once.");
+                        if (Desynthesis.ListedTwice(resolved.Select(r => (r.Item.RowId, r.Item.Name.ExtractText()))) is { } twice)
+                            throw new ToolException(twice);
                         return resolved.Select(r => PlanItem(r.Item, r.Quantity, r.Keep, r.Hq, gearsets)).ToList();
                     }).ConfigureAwait(false);
                     var results = plans.Where(p => p.Refused is not null || p.Steps.Count == 0)
@@ -218,14 +218,10 @@ internal static class DesynthTools
     /// <summary>Asks the player in game to approve the whole list; desynthesis can't be undone, so this is asked every time.</summary>
     private static async Task Approve(List<ItemPlan> todo, Permissions.Caller? caller, CancellationToken ct)
     {
-        var details = todo.Select(p =>
-        {
-            var count = p.Steps.Sum(s => s.Count);
-            var hq = p.Steps.Where(s => p.Stacks[s.Stack].Hq).Sum(s => s.Count);
-            return $"{count} × {p.Name}{(hq == 0 ? "" : hq == count ? " (HQ)" : $" ({hq} of them HQ)")}";
-        }).ToList();
-        var total = todo.Sum(p => p.Steps.Sum(s => s.Count));
-        var request = new Consent.Request(todo.Count == 1 ? $"Desynthesize {details[0]}?" : $"Desynthesize {total} items?", details)
+        var approval = Desynthesis.Approval(todo
+            .Select(p => new DesynthCount(p.Name, p.Steps.Sum(s => s.Count), p.Steps.Where(s => p.Stacks[s.Stack].Hq).Sum(s => s.Count)))
+            .ToList());
+        var request = new Consent.Request(approval.Title, approval.Details)
         {
             Deadline = DateTime.UtcNow + ConsentTimeout,
             Source = caller?.Name ?? "your AI assistant",
