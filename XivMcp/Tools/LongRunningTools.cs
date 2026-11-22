@@ -380,6 +380,13 @@ internal static class LongRunningTools
                         else if (sawRunning || now - started > TimeSpan.FromSeconds(30)) break;
                         // A paused list or a solver still working isn't stuck, unless the solver works far too long without a craft.
                         if (paused) progress.Touch(now);
+                        // A retainer plugin can open the retainer list right after a bell step; Artisan then waits forever.
+                        if (await Game.Run(() => Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedSummoningBell]).ConfigureAwait(false))
+                        {
+                            var freed = await Recovery.Run(ct).ConfigureAwait(false);
+                            if (freed.Actions.Count > 0) JobManager.Instance?.StepProgress("run_crafting_list", $"recovery: {string.Join(" ", freed.Actions)}");
+                            progress.Touch(DateTime.UtcNow);
+                        }
                         progress.SolverBusy(solving, now);
                         if (running && progress.SolverHung(now, SolverLimit))
                         {
