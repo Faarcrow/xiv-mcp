@@ -61,4 +61,20 @@ public class MobFarmTests
     [InlineData(3, 20f)]
     [InlineData(4, 20f)]
     public void Melee_stands_close_casters_at_range(byte role, float range) => Assert.Equal(range, MobFarm.Range(role));
+
+    [Fact]
+    public void The_nearest_living_attacker_is_fought_back()
+    {
+        var picked = Defense.Attacker([
+            new NearbyMonster(1, 5, TargetsMe: false, Alive: true),   // just standing there
+            new NearbyMonster(2, 12, TargetsMe: true, Alive: true),
+            new NearbyMonster(3, 3, TargetsMe: true, Alive: false),   // dead
+            new NearbyMonster(4, 8, TargetsMe: true, Alive: true),
+        ]);
+        Assert.Equal(4UL, picked);
+    }
+
+    [Fact]
+    public void Nothing_attacking_means_no_one_to_fight() =>
+        Assert.Null(Defense.Attacker([new NearbyMonster(1, 5, TargetsMe: false, Alive: true)]));
 }

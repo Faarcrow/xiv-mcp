@@ -59,6 +59,8 @@ From an inn room, XIV MCP first teleports you out with the game's own teleport (
 
 Maps carry no height, so the nearest aethernet shard can be on a level the NPC cannot be walked to from (Limsa's Airship Landing is reached only by lift). When the walk from there runs into an obstacle, XIV MCP travels once more, by another shard or aetheryte. Some shard names exist in more than one city (Limsa and Gridania both have an Airship Landing); for those, XIV MCP teleports to the right city first and takes the aethernet from there.
 
+Right after a teleport, vnavmesh can take a moment to load the new zone's navmesh, and a walk asked for too early never starts. XIV MCP then waits for the navmesh and asks again, up to three times.
+
 ### Riding
 
 For a walk of 50 yalms or more, XIV MCP gets on a mount first (Mount Roulette), and flies where the zone allows it and you have found its aether currents. It gets off when you arrive. Turn this off in `/xivmcp` → Modules → Game & navigation → *Ride a mount for longer walks*.

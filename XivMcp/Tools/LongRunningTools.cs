@@ -153,6 +153,9 @@ internal static class LongRunningTools
                 try
                 {
                     await WaitForPlugin(CraftGatherTools.GatherBuddy, ct).ConfigureAwait(false);
+                    // GatherBuddy only reports "Player is busy" while a window holds the character, e.g. the retainer list a retainer
+                    // plugin opened at the bell after the last step: free the character first.
+                    if (await Game.Run(() => Recovery.Occupied).ConfigureAwait(false)) await Recovery.Run(ct).ConfigureAwait(false);
                     await Game.Run(() => { Svc.PluginInterface.GetIpcSubscriber<bool, object>("GatherBuddyReborn.SetAutoGatherEnabled").InvokeAction(true); return true; }).ConfigureAwait(false);
                     await Task.Delay(5000, ct).ConfigureAwait(false);
                     var goal = until ?? targets;
@@ -196,6 +199,13 @@ internal static class LongRunningTools
                             await Task.Delay(5000, ct).ConfigureAwait(false);
                             stall.Reset(DateTime.UtcNow);
                             continue;
+                        }
+                        // A retainer plugin can open the retainer list while the character stands near a bell; never a gathering node.
+                        if (await Game.Run(() => Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedSummoningBell]).ConfigureAwait(false))
+                        {
+                            var freed = await Recovery.Run(ct).ConfigureAwait(false);
+                            if (freed.Actions.Count > 0) JobManager.Instance?.StepProgress("gather_until", $"recovery: {string.Join(" ", freed.Actions)}");
+                            stall.Reset(DateTime.UtcNow);
                         }
                         if (stall.Observe(DateTime.UtcNow, state.Have, state.Activity))
                         {
@@ -267,6 +277,10 @@ internal static class LongRunningTools
                 var stallAfter = TimeSpan.FromMinutes(args.Int("stall_minutes", 5, 0, 120));
                 // Crafting is refused while a gathering node is open (e.g. right after a gather_until step).
                 await LeaveGatheringNode(ct).ConfigureAwait(false);
+                // Right after a fight (a farm_monster_drops step) the game refuses the job change Artisan needs ("unable to change
+                // classes or jobs at this time"), and Artisan then pauses its list for good: wait for the combat flag to clear.
+                for (var i = 0; i < 90 && await Game.Run(() => Svc.Condition[ConditionFlag.InCombat]).ConfigureAwait(false); i++)
+                    await Task.Delay(1000, ct).ConfigureAwait(false);
                 var (listId, listName, current) = await Game.RunLoggedIn(() =>
                 {
                     CraftGatherTools.RequireArtisan();
@@ -289,7 +303,7 @@ internal static class LongRunningTools
                 string? resumeNote = null;
                 if (resume.Shrink is { } left && !resume.AllDone)
                 {
-                    await CraftGatherTools.WriteCraftingList(listId.ToString(), null, left.Select(r => (r.RecipeId, r.Crafts)).ToList(), append: false).ConfigureAwait(false);
+                    await CraftGatherTools.WriteCraftingList(listId.ToString(), null, left.Select(r => (r.RecipeId, r.Crafts)).ToList(), append: false, skipIfEnough: null).ConfigureAwait(false);
                     await WaitForPlugin(CraftGatherTools.Artisan, ct).ConfigureAwait(false);
                     written = left;
                     resumeNote = $"Continued an earlier run: the list was shrunk to the {left.Sum(r => r.Crafts)} craft(s) still missing.";
@@ -366,6 +380,13 @@ internal static class LongRunningTools
                         else if (sawRunning || now - started > TimeSpan.FromSeconds(30)) break;
                         // A paused list or a solver still working isn't stuck, unless the solver works far too long without a craft.
                         if (paused) progress.Touch(now);
+                        // A retainer plugin can open the retainer list right after a bell step; Artisan then waits forever.
+                        if (await Game.Run(() => Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedSummoningBell]).ConfigureAwait(false))
+                        {
+                            var freed = await Recovery.Run(ct).ConfigureAwait(false);
+                            if (freed.Actions.Count > 0) JobManager.Instance?.StepProgress("run_crafting_list", $"recovery: {string.Join(" ", freed.Actions)}");
+                            progress.Touch(DateTime.UtcNow);
+                        }
                         progress.SolverBusy(solving, now);
                         if (running && progress.SolverHung(now, SolverLimit))
                         {
@@ -395,10 +416,17 @@ internal static class LongRunningTools
                 if (!progress.MadeProgressThisRun && !progress.Finished)
                     throw new ToolException($"Artisan stopped without crafting anything from '{plan.Name}' (stopped at {progress.Current!.Item}: missing materials, wrong job or gear?)." +
                                             (GearIngredients.Note(progress.Current.GearIngredients) is { } manual ? " " + manual : ""));
-                var restored = progress.Finished && !written.SequenceEqual(resume.Original) ? await RestoreList(plan.Id, resume.Original).ConfigureAwait(false) : null;
+                // Stopping early is a failure: the steps after it (quests, turn-ins) would run short of the crafts still missing.
+                if (!progress.Finished)
+                {
+                    var free = await Game.Run(Items.FreeBagSlots).ConfigureAwait(false);
+                    throw new ToolException($"Artisan stopped early on '{plan.Name}', at {progress.Current!.Item}: not every craft was made" +
+                                            (free == 0 ? " (the bags are full: free some slots first)." : " (missing materials, wrong job or gear?).") +
+                                            Continues(progress));
+                }
+                var restored = !written.SequenceEqual(resume.Original) ? await RestoreList(plan.Id, resume.Original).ConfigureAwait(false) : null;
                 return new { list = plan.Name, minutes = Math.Round((DateTime.UtcNow - started).TotalMinutes, 1), crafted = Report(plan.Entries, progress),
-                             resumed = resumeNote, restored,
-                             note = progress.Finished ? null : $"The list stopped early, at {progress.Current!.Item}: not every craft was made." + Continues(progress) };
+                             resumed = resumeNote, restored };
             },
         };
     }
@@ -455,7 +483,7 @@ internal static class LongRunningTools
     {
         try
         {
-            await CraftGatherTools.WriteCraftingList(listId.ToString(), null, original.Select(r => (r.RecipeId, r.Crafts)).ToList(), append: false).ConfigureAwait(false);
+            await CraftGatherTools.WriteCraftingList(listId.ToString(), null, original.Select(r => (r.RecipeId, r.Crafts)).ToList(), append: false, skipIfEnough: null).ConfigureAwait(false);
             return "The Artisan list has its original quantities again.";
         }
         catch (Exception ex)

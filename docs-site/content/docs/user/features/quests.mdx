@@ -47,9 +47,12 @@ Some steps Questionable leaves to you: a duty it cannot run (or cannot have [Aut
 Two kinds of steps XIV MCP moves on from by itself, as if you pressed Questionable's Skip:
 
 - **"Meld materia on …"** when that piece of gear (in your bags, armoury or worn) already carries materia.
+- **Buying an ingredient** at a shop when your bags already hold enough of it (Questionable can otherwise hang in the open shop).
 - **Crafting a turn-in** that is already in your bags in the asked quality. Questionable has Artisan craft every item of the quest otherwise, again, which uses up materials meant for other turn-ins.
 
-When Questionable stops making progress, for example after a teleport took you to the wrong place, XIV MCP starts it again: when you stand in the same spot for two minutes without talking, fighting, gathering, crafting, a cutscene or a zone change. When Questionable stops because vnavmesh found no path (often while still flying), XIV MCP waits until you have landed and starts it again. After three restarts the job stops.
+When Questionable stops making progress, for example after a teleport took you to the wrong place, XIV MCP starts it again: when you stand in the same spot for two minutes without talking, fighting, gathering, crafting, a cutscene or a zone change. When Questionable stops because vnavmesh found no path (often while still flying), XIV MCP waits until you have landed and starts it again. Questionable also often stops by itself after a step it hands off, such as a craft, a cutscene or a dialogue choice, although the quest goes on. When it has stood still for 10 seconds after such a step, XIV MCP starts it again. After three restarts in a row the job stops.
+
+A quest can only be turned in on the job it was accepted on. A class quest's craft step can leave you on another crafter, so before Questionable goes on with an accepted quest, XIV MCP switches back to that job. When you hand in a high-quality item, the game asks "Do you really want to trade a high-quality item?"; during a quest conversation XIV MCP answers Yes.
 
 ## Allied society quests
 

@@ -154,6 +154,13 @@ public static class QuestJobs
         return options.OrderByDescending(o => o.Level >= questLevel).ThenByDescending(o => o.Level).First().JobId;
     }
 
+    /// <summary>
+    /// The job to go on with an accepted quest: the one it was accepted on (the game only lets that job turn it in, and a craft
+    /// step can leave the character on another crafter), as long as it has a gearset; else the current one.
+    /// </summary>
+    public static uint ForAccepted(uint acceptedJob, uint current, IEnumerable<JobOption> gearsets) =>
+        acceptedJob != 0 && gearsets.Any(o => o.JobId == acceptedJob) ? acceptedJob : current;
+
     /// <summary>A gathering quest that was accepted as Fisher although Miner or Botanist may do it: Questionable cannot finish it.</summary>
     public static bool AcceptedAsFisherInstead(IReadOnlyCollection<uint> allowed, uint acceptedJob) =>
         acceptedJob == Fisher && GathersOnLand(allowed);
@@ -205,6 +212,42 @@ public sealed class StallWatch(TimeSpan limit, float distance = 2f)
         if (now - since <= limit) return false;
         anchor = null;
         return true;
+    }
+}
+
+public enum QuestionableStopAction { Continue, Restart, Fail }
+
+/// <summary>
+/// Questionable often stops by itself after a step it hands off (a craft through Artisan, a cutscene, a dialogue choice) although
+/// the quest goes on. Stopped for 10 seconds while the character is free: start it again, a few times; running again for
+/// 2 minutes gives the restarts back. Time in a cutscene or craft doesn't count.
+/// </summary>
+public sealed class QuestionableStop(int maxRestarts)
+{
+    public static readonly TimeSpan Grace = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan Recovered = TimeSpan.FromMinutes(2);
+    private DateTime? stoppedSince, runningSince;
+    private int restarts;
+
+    public QuestionableStopAction Next(DateTime now, bool running, bool busy)
+    {
+        if (running)
+        {
+            stoppedSince = null;
+            runningSince ??= now;
+            if (now - runningSince >= Recovered) restarts = 0;
+            return QuestionableStopAction.Continue;
+        }
+        runningSince = null;
+        if (busy)
+        {
+            stoppedSince = null;
+            return QuestionableStopAction.Continue;
+        }
+        stoppedSince ??= now;
+        if (now - stoppedSince <= Grace) return QuestionableStopAction.Continue;
+        stoppedSince = null;
+        return restarts++ < maxRestarts ? QuestionableStopAction.Restart : QuestionableStopAction.Fail;
     }
 }
 

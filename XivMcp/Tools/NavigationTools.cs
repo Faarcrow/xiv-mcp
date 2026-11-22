@@ -225,24 +225,39 @@ internal static partial class NavigationTools
             await GuidePlace(where, steps, ct).ConfigureAwait(false);
             return;
         }
-        await Game.RunLoggedIn(() =>
+        // Lifestream can ignore the request (right after a quest turn-in, say) and the wait below then "settles" at once: check the
+        // zone really changed, ask again twice, and fail clearly instead of reporting an arrival that never happened.
+        var (startZone, startUse) = await Game.Run(() => (Svc.ClientState.TerritoryType, CurrentIntendedUse())).ConfigureAwait(false);
+        for (var attempt = 1; ; attempt++)
         {
-            EnsureCanTravel();
-            switch (where)
+            if (await Game.Run(() => Recovery.Occupied).ConfigureAwait(false) && await Recovery.Run(ct).ConfigureAwait(false) is { } freed)
+                steps.AddRange(freed.Actions);
+            await Game.RunLoggedIn(() =>
             {
-                case "inn": GoToInn(); break;
-                case "fc": EnsureOwns(HasFcHouse, "a free company house"); GoToProperty(PropertyType.FC, HouseEnterMode.Enter_house); break;
-                case "workshop": EnsureOwns(HasFcHouse, "a free company house"); GoToProperty(PropertyType.FC, HouseEnterMode.Enter_workshop); break;
-                case "home": EnsureOwns(HasHouse, "a private house"); GoToProperty(PropertyType.Home, HouseEnterMode.Enter_house); break;
-                case "apartment": EnsureOwns(HasApartment, "an apartment"); GoToProperty(PropertyType.Apartment, HouseEnterMode.Enter_house); break;
-                default: GoToProperty(PropertyType.Auto, HouseEnterMode.Enter_house); break; // Lifestream's own property priority
-            }
-            return true;
-        }).ConfigureAwait(false);
-        steps.Add($"Lifestream: travelling to {(where == "lifestream" ? "your preferred property (Lifestream's priority list)" : where)}.");
-        phase = $"travelling to {where} (Lifestream)";
+                EnsureCanTravel();
+                switch (where)
+                {
+                    case "inn": GoToInn(); break;
+                    case "fc": EnsureOwns(HasFcHouse, "a free company house"); GoToProperty(PropertyType.FC, HouseEnterMode.Enter_house); break;
+                    case "workshop": EnsureOwns(HasFcHouse, "a free company house"); GoToProperty(PropertyType.FC, HouseEnterMode.Enter_workshop); break;
+                    case "home": EnsureOwns(HasHouse, "a private house"); GoToProperty(PropertyType.Home, HouseEnterMode.Enter_house); break;
+                    case "apartment": EnsureOwns(HasApartment, "an apartment"); GoToProperty(PropertyType.Apartment, HouseEnterMode.Enter_house); break;
+                    default: GoToProperty(PropertyType.Auto, HouseEnterMode.Enter_house); break; // Lifestream's own property priority
+                }
+                return true;
+            }).ConfigureAwait(false);
+            steps.Add($"Lifestream: travelling to {(where == "lifestream" ? "your preferred property (Lifestream's priority list)" : where)}.");
+            phase = $"travelling to {where} (Lifestream)";
 
-        await WaitUntilSettled(ct).ConfigureAwait(false);
+            await Task.Delay(2000, ct).ConfigureAwait(false);
+            await WaitUntilSettled(ct).ConfigureAwait(false);
+            var now = await Game.Run(() => Svc.ClientState.TerritoryType).ConfigureAwait(false);
+            if (!XivMcp.Maps.PlayerGuidance.PropertyTripFailed(startZone, startUse, now)) break;
+            if (attempt == 3)
+                throw new ToolException($"Lifestream did not travel to {where}: still in {await Game.Run(ZoneName).ConfigureAwait(false)} after three tries.");
+            steps.Add("Lifestream did not leave the zone; asking again.");
+            await Task.Delay(3000, ct).ConfigureAwait(false);
+        }
 
         if (where == "workshop" && !await InWorkshop().ConfigureAwait(false) && await Game.Run(() => CanMoveToWorkshop).ConfigureAwait(false))
         {
@@ -320,11 +335,32 @@ internal static partial class NavigationTools
             // NPCs often stand behind a counter: walk to the nearest reachable point next to them, not into the counter.
             var goal = await Game.Run(() =>
                 Ipc<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPointReachable", t.Position, TalkRange - 1, 5f) ?? t.Position).ConfigureAwait(false);
-            if (!await StartPath(goal, ArriveRange, steps, ct).ConfigureAwait(false))
-                throw new ToolException($"vnavmesh could not start a path to {t.Name}.");
+            // Right after a teleport vnavmesh can still hold the old zone's mesh (or start loading the new one a moment later):
+            // the path then never starts. Wait until it runs, else wait for the mesh again and ask once more.
+            var started = false;
+            for (var attempt = 0; attempt < 3 && !started; attempt++)
+            {
+                if (attempt > 0)
+                {
+                    steps.Add("vnavmesh did not start the path; waiting for the navmesh and trying again.");
+                    var again = DateTime.UtcNow;
+                    await Task.Delay(1500, ct).ConfigureAwait(false);
+                    while (!await Game.Run(() => NavReady).ConfigureAwait(false))
+                    {
+                        if (DateTime.UtcNow - again > TimeSpan.FromSeconds(90)) throw new ToolException("vnavmesh did not finish building the navmesh for this zone.");
+                        await Task.Delay(500, ct).ConfigureAwait(false);
+                    }
+                    goal = await Game.Run(() =>
+                        Ipc<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPointReachable", t.Position, TalkRange - 1, 5f) ?? t.Position).ConfigureAwait(false);
+                }
+                if (!await StartPath(goal, ArriveRange, steps, ct).ConfigureAwait(false)) continue;
+                var until = DateTime.UtcNow.AddSeconds(5);
+                while (!(started = await Game.Run(() => PathRunning).ConfigureAwait(false)) && DateTime.UtcNow < until)
+                    await Task.Delay(200, ct).ConfigureAwait(false);
+            }
+            if (!started) throw new ToolException($"vnavmesh could not start a path to {t.Name}.");
             steps.Add($"vnavmesh: walking to {t.Name} ({t.Distance:0.#} yalms).");
             phase = $"walking to {t.Name}";
-            await Task.Delay(500, ct).ConfigureAwait(false);
             var approach = new Maps.Approach(TimeSpan.FromSeconds(3));
             while (await Game.Run(() => PathRunning).ConfigureAwait(false))
             {

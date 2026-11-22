@@ -89,7 +89,9 @@ internal static class CraftPlanTools
                     CraftGatherTools.EnsureArtisanIdle();
                     var full = CraftPlanner.Build(targets, options, retainers);
                     var batch = full.Batches.FirstOrDefault(b => b.Index == batchIndex)
-                                ?? throw new ToolException($"The plan has {full.Batches.Count} batch(es); there is no batch {batchIndex}.");
+                                ?? throw new ToolException(full.Batches.Count == 0
+                                    ? $"Not even part of this project fits in the bags: it needs {full.PeakSlotsNeeded} free bag slots at its peak, {full.FreeSlots} are free. Free up space first."
+                                    : $"The plan has {full.Batches.Count} batch(es); there is no batch {batchIndex}.");
                     return (Plan: full.Batches.Count == 1 ? full : CraftPlanner.Build(batch.Targets, options, retainers), Total: full.Batches.Count);
                 }).ConfigureAwait(false);
                 var blocking = plan.Steps.Where(s => s.Problem is not null).ToList();
@@ -100,7 +102,9 @@ internal static class CraftPlanTools
                 // 1. The Artisan list (this reloads Artisan, so it comes before the in-memory Raphael work).
                 var name = args.String("list_name") ?? $"MCP: {Items.Name(targets[0].ItemId)}" + (totalBatches > 1 ? $" (batch {batchIndex})" : "");
                 var existing = await Game.Run(() => ExistingList(name)).ConfigureAwait(false);
-                var (listId, backup) = await CraftGatherTools.WriteCraftingList(existing, name, plan.Steps.Select(s => (s.RecipeId, s.Crafts)).ToList(), append: false).ConfigureAwait(false);
+                // Never Artisan's "skip if the bags hold enough": the plan's craft counts are already net of the bags (count_existing),
+                // and intermediates that later crafts use up would be skipped too. A rerun continues through run_crafting_list instead.
+                var (listId, backup) = await CraftGatherTools.WriteCraftingList(existing, name, plan.Steps.Select(s => (s.RecipeId, s.Crafts)).ToList(), append: false, skipIfEnough: false).ConfigureAwait(false);
 
                 // 2. Raphael: select it per recipe and build the solutions, one at a time.
                 var raphael = new List<object>();

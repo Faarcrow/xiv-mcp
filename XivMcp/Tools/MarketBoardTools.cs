@@ -91,6 +91,21 @@ internal static class MarketBoardTools
                 : $"The cheapest {name} costs {cheapest.UnitPrice:N0} gil each, above your limit of {maxPrice:N0}.");
         }
         var total = plan.Sum(p => (long)p.UnitPrice * p.Quantity + p.Tax);
+        var planned = plan.Sum(p => (long)p.Quantity);
+        // With full bags the game still takes the gil, and the items don't arrive in the bags.
+        var (slotsNeeded, slotsFree) = await Game.Run(() => (Items.SlotsNeeded(item.RowId, (int)Math.Min(planned, 9999)), Items.FreeBagSlots())).ConfigureAwait(false);
+        if (slotsNeeded > slotsFree)
+        {
+            await Game.Run(CloseMarketBoard).ConfigureAwait(false);
+            throw new ToolException($"{planned} {name} need {slotsNeeded} free bag slot(s); only {slotsFree} are free. Make room first (sell or store items), then buy.");
+        }
+        if (MarketPurchase.TooDear(total, quantity, maxPrice))
+        {
+            await Game.Run(CloseMarketBoard).ConfigureAwait(false);
+            throw new ToolException($"Under {maxPrice:N0} gil each only bigger stacks are listed: {planned} {name} for {total:N0} gil to get the {quantity} wanted, " +
+                                    $"more than {quantity} at {maxPrice:N0} would cost. Stopped instead of buying the surplus; buy on another world, " +
+                                    "get them another way, or raise max_unit_price to accept it.");
+        }
 
         // 3. Approval, like buy_item: a standing approval, or ask above the gil limit.
         Approvals.Approval? approval = null;

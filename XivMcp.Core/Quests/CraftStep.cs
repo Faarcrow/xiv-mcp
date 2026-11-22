@@ -11,10 +11,17 @@ public static class CraftStep
 {
     public const string Craft = "Craft";
 
+    /// <summary>Questionable's shop step; it can hang in the open shop when the bags already hold the item.</summary>
+    public const string PurchaseItem = "PurchaseItem";
+
+    /// <summary>Whether XIV MCP checks this kind of step against the bags.</summary>
+    public static bool Covers(string? interactionType) =>
+        string.Equals(interactionType, Craft, StringComparison.Ordinal) || string.Equals(interactionType, PurchaseItem, StringComparison.Ordinal);
+
     /// <param name="quality">The step's ItemQuality: "NQ", "HQ" or "Any" (null = Any).</param>
     public static bool IsDone(string? interactionType, int? itemCount, int nqOwned, int hqOwned, string? quality)
     {
-        if (!string.Equals(interactionType, Craft, StringComparison.Ordinal) || itemCount is not > 0) return false;
+        if (!Covers(interactionType) || itemCount is not > 0) return false;
         var owned = quality switch
         {
             "NQ" => nqOwned,

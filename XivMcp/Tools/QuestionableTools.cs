@@ -271,7 +271,7 @@ internal static class QuestionableTools
                         throw new ToolException($"{next.Name} cannot be accepted yet" + (reason.Length > 0 ? $" ({reason})." : ".") + LevelWarning([next]));
                     }
                     // Quests remember the job they were accepted on, and Questionable does not switch jobs: accept on one that can do it.
-                    var job = IsAccepted(next) ? Gearsets.CurrentJob() : JobFor(next)
+                    var job = IsAccepted(next) ? QuestJobs.ForAccepted(AcceptedJob(next) ?? 0, Gearsets.CurrentJob(), GearsetJobs()) : JobFor(next)
                               ?? throw new ToolException($"No gearset is saved for a job that can do {next.Name} ({JobNames(next.Jobs)}).");
                     return (next, job);
                 }).ConfigureAwait(false);
@@ -281,6 +281,11 @@ internal static class QuestionableTools
                     await StopAfterFight(ct).ConfigureAwait(false);
                     await Gearsets.Switch(await Game.Run(() => JobAbbreviation(job)).ConfigureAwait(false), ct).ConfigureAwait(false);
                 }
+
+                // A window that holds the character (the retainer list AutoRetainer's retainer sense opens at a bell, a shop) keeps
+                // Questionable from teleporting: it then waits forever. Close it first.
+                if (await Game.Run(() => Recovery.Occupied).ConfigureAwait(false))
+                    await Recovery.Run(ct).ConfigureAwait(false);
 
                 // Only the quests this job can do: the others come in a later round, after switching.
                 var (batch, accepting) = await Game.Run(() =>
@@ -300,7 +305,8 @@ internal static class QuestionableTools
                 }).ConfigureAwait(false);
 
                 var ids = batch.Select(q => q.QuestionableId).ToHashSet();
-                DateTime? stoppedSince = null, elsewhereSince = null;
+                DateTime? elsewhereSince = null;
+                var stopped = new QuestionableStop(MaxRestarts);
                 var stall = new StallWatch(StallLimit);
                 // A quest counts as done only when the game's quest state says so on two checks in a row.
                 var turnedIn = new SteadyReading<uint?>(2);
@@ -324,6 +330,13 @@ internal static class QuestionableTools
                     // reports running: starting it again from its current step gets it going.
                     // A step for the player (a duty it cannot run, a solo duty, something by hand): Questionable waits for it.
                     // "Meld any materia on X": Questionable waits for a click on Skip even when X already carries materia.
+                    // Handing in an HQ turn-in asks "Do you really want to trade a high-quality item?", which nothing answers.
+                    if (await Game.Run(ConfirmHqTurnIn).ConfigureAwait(false))
+                    {
+                        Svc.Log.Information("[MCP] Confirmed handing in a high-quality item for the quest.");
+                        stall = new StallWatch(StallLimit);
+                        continue;
+                    }
                     if (await Game.Run(SkipDoneMeld).ConfigureAwait(false) is { } skipped)
                     {
                         Svc.Log.Information($"[MCP] {skipped}");
@@ -341,11 +354,10 @@ internal static class QuestionableTools
                         Svc.Log.Information($"[MCP] Questionable made no progress for {StallLimit.TotalMinutes:0} minutes; restarting it on quest {again} ({restarts}/{MaxRestarts}).");
                         await StopAfterFight(ct).ConfigureAwait(false);
                         await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+                        await BackToAcceptedJob(batch.FirstOrDefault(q => q.QuestionableId == again) ?? first, ct).ConfigureAwait(false);
                         await Game.Run(() => Ipc<string, bool>("StartQuest", again)).ConfigureAwait(false);
-                        stoppedSince = null;
                         continue;
                     }
-                    stoppedSince = s.Running ? null : stoppedSince ?? DateTime.UtcNow;
                     // vnavmesh found no path (in the air, say): from where the character is once landed, it usually does.
                     if (!s.Running && chat.Last is { } failed && QuestionableMessage.NavigationFailed(failed) && restarts < MaxRestarts)
                     {
@@ -358,10 +370,20 @@ internal static class QuestionableTools
                             await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
                         await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
                         await Game.Run(() => Ipc<string, bool>("StartQuest", again)).ConfigureAwait(false);
-                        stoppedSince = null;
                         continue;
                     }
-                    if (DateTime.UtcNow - stoppedSince > TimeSpan.FromSeconds(10))
+                    // Questionable often stops by itself after a craft, a cutscene or a dialogue choice although the quest goes on.
+                    var verdict = stopped.Next(DateTime.UtcNow, s.Running, s.Busy);
+                    if (verdict == QuestionableStopAction.Restart)
+                    {
+                        var again = s.Current is { Length: > 0 } cur && ids.Contains(cur) ? cur : first.QuestionableId;
+                        Svc.Log.Information($"[MCP] Questionable stopped by itself; starting it again on quest {again}.");
+                        await BackToAcceptedJob(batch.FirstOrDefault(q => q.QuestionableId == again) ?? first, ct).ConfigureAwait(false);
+                        await Game.Run(() => Ipc<string, bool>("StartQuest", again)).ConfigureAwait(false);
+                        stall = new StallWatch(StallLimit);
+                        continue;
+                    }
+                    if (verdict == QuestionableStopAction.Fail)
                         throw new ToolException($"Questionable stopped on its own while on {first.Name}." + (chat.Said is { Length: > 0 } why ? why : " Its window says why (a duty, a level, a step it cannot do)."));
                     elsewhereSince = s.Current is { Length: > 0 } c && !ids.Contains(c) ? elsewhereSince ?? DateTime.UtcNow : null;
                     if (DateTime.UtcNow - elsewhereSince > TimeSpan.FromSeconds(30))
@@ -580,7 +602,7 @@ internal static class QuestionableTools
     /// </summary>
     private static unsafe string? CraftStepDone(object step, string? type)
     {
-        if (type != XivMcp.Quests.CraftStep.Craft) return null;
+        if (!XivMcp.Quests.CraftStep.Covers(type)) return null;
         var itemId = step.GetType().GetProperty("ItemId", Any)?.GetValue(step) as uint?;
         var count = step.GetType().GetProperty("ItemCount", Any)?.GetValue(step) as int?;
         var quality = step.GetType().GetProperty("ItemQuality", Any)?.GetValue(step)?.ToString();
@@ -589,9 +611,25 @@ internal static class QuestionableTools
         var nq = im->GetInventoryItemCount(id, false, false);
         var hq = im->GetInventoryItemCount(id, true, false);
         if (!XivMcp.Quests.CraftStep.IsDone(type, count, nq, hq, quality)) return null;
-        if (CraftGatherTools.Ipc("Artisan.IsListRunning") == true || CraftGatherTools.Ipc("Artisan.IsBusy") == true)
+        if (type == XivMcp.Quests.CraftStep.Craft &&
+            (CraftGatherTools.Ipc("Artisan.IsListRunning") == true || CraftGatherTools.Ipc("Artisan.IsBusy") == true))
             CraftGatherTools.StopArtisan();
-        return $"Questionable's craft step for {count}x {Items.Name(id)} was skipped: the bags already hold {nq + hq}.";
+        var what = type == XivMcp.Quests.CraftStep.Craft ? "craft" : "purchase";
+        return $"Questionable's {what} step for {count}x {Items.Name(id)} was skipped: the bags already hold {nq + hq}.";
+    }
+
+    /// <summary>
+    /// During a quest conversation, answers "Do you really want to trade a high-quality item?" with Yes: the quest asks for the
+    /// item (often HQ), and the prompt otherwise stays up until the turn-in times out. Framework thread.
+    /// </summary>
+    private static unsafe bool ConfirmHqTurnIn()
+    {
+        if (!Svc.Condition[ConditionFlag.OccupiedInQuestEvent] || !GameWindows.Ready("SelectYesno")) return false;
+        var yesno = GameWindows.Addon("SelectYesno");
+        var prompts = GameWindows.Texts(TradeTools.HighQualityPrompt);
+        if (!GameWindows.AllTexts(yesno).Any(t => prompts.Any(p => t.StartsWith(p, StringComparison.OrdinalIgnoreCase)))) return false;
+        RetainerUi.Fire(yesno, true, 0);
+        return true;
     }
 
     /// <summary>Whether a piece of gear of that name (bags, armoury, worn) has materia melded. Framework thread.</summary>
@@ -669,6 +707,20 @@ internal static class QuestionableTools
         return Gearsets.All().Where(s => s.MissingItems == 0)
                        .Select(s => new JobOption(s.JobId, jobs.GetRowOrDefault(s.JobId) is { ExpArrayIndex: >= 0 and var i } && i < levels.Length ? levels[i] : 0))
                        .ToList();
+    }
+
+    /// <summary>
+    /// Switches back to the job an accepted quest was accepted on when the character is on another one (a craft step's Artisan
+    /// list switches crafters), before Questionable is started again: only that job can turn the quest in.
+    /// </summary>
+    private static async Task BackToAcceptedJob(QuestInfo quest, CancellationToken ct)
+    {
+        var (job, current) = await Game.Run(() => (Job: IsAccepted(quest) ? QuestJobs.ForAccepted(AcceptedJob(quest) ?? 0, Gearsets.CurrentJob(), GearsetJobs()) : Gearsets.CurrentJob(),
+                                                   Current: Gearsets.CurrentJob())).ConfigureAwait(false);
+        if (job == current) return;
+        Svc.Log.Information($"[MCP] {quest.Name} was accepted as {await Game.Run(() => JobAbbreviation(job)).ConfigureAwait(false)}; switching back before Questionable goes on.");
+        await StopAfterFight(ct).ConfigureAwait(false);
+        await Gearsets.Switch(await Game.Run(() => JobAbbreviation(job)).ConfigureAwait(false), ct).ConfigureAwait(false);
     }
 
     /// <summary>The job a quest was accepted on, or null when it is not accepted.</summary>

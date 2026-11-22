@@ -137,6 +137,21 @@ public class QuestJobTests
     }
 
     [Fact]
+    public void An_accepted_quest_goes_back_to_the_job_it_was_accepted_on()
+    {
+        // A class quest's craft step left the character on another crafter (Artisan switches jobs): the turn-in needs the class.
+        Assert.Equal(Pld, QuestJobs.ForAccepted(acceptedJob: Pld, current: Blm, gearsets: Sets));
+        Assert.Equal(Blm, QuestJobs.ForAccepted(acceptedJob: Blm, current: Blm, gearsets: Sets));
+    }
+
+    [Fact]
+    public void An_accepted_quest_stays_on_the_current_job_when_the_accepting_job_is_unknown_or_has_no_gearset()
+    {
+        Assert.Equal(Blm, QuestJobs.ForAccepted(acceptedJob: 0, current: Blm, gearsets: Sets));
+        Assert.Equal(Blm, QuestJobs.ForAccepted(acceptedJob: 33, current: Blm, gearsets: Sets));
+    }
+
+    [Fact]
     public void The_current_job_stays_when_it_may_do_the_quest()
     {
         Assert.Equal(Blm, QuestJobs.Pick([Pld, Blm], Blm, Sets, 70));
@@ -215,6 +230,55 @@ public class StallWatchTests
         watch.Stalled(T0, Here, busy: false);
         Assert.True(watch.Stalled(T0.AddSeconds(130), Here, busy: false));
         Assert.False(watch.Stalled(T0.AddSeconds(140), Here, busy: false));
+    }
+}
+
+public class QuestionableStopTests
+{
+    private static readonly System.DateTime T0 = new(2026, 11, 21, 18, 0, 0, System.DateTimeKind.Utc);
+
+    [Fact]
+    public void Running_or_a_short_pause_is_fine()
+    {
+        var stop = new QuestionableStop(maxRestarts: 2);
+        Assert.Equal(QuestionableStopAction.Continue, stop.Next(T0, running: true, busy: false));
+        Assert.Equal(QuestionableStopAction.Continue, stop.Next(T0, running: false, busy: false));
+        Assert.Equal(QuestionableStopAction.Continue, stop.Next(T0.AddSeconds(8), running: false, busy: false));
+    }
+
+    [Fact]
+    public void A_cutscene_or_craft_does_not_count_as_stopped()
+    {
+        var stop = new QuestionableStop(maxRestarts: 2);
+        stop.Next(T0, running: false, busy: true);
+        Assert.Equal(QuestionableStopAction.Continue, stop.Next(T0.AddSeconds(60), running: false, busy: true));
+        // The 10 seconds count from the end of the cutscene.
+        Assert.Equal(QuestionableStopAction.Continue, stop.Next(T0.AddSeconds(65), running: false, busy: false));
+        Assert.Equal(QuestionableStopAction.Restart, stop.Next(T0.AddSeconds(76), running: false, busy: false));
+    }
+
+    [Fact]
+    public void Stopped_for_good_is_restarted_a_few_times_then_fails()
+    {
+        var stop = new QuestionableStop(maxRestarts: 2);
+        stop.Next(T0, running: false, busy: false);
+        Assert.Equal(QuestionableStopAction.Restart, stop.Next(T0.AddSeconds(11), running: false, busy: false));
+        stop.Next(T0.AddSeconds(12), running: false, busy: false);
+        Assert.Equal(QuestionableStopAction.Restart, stop.Next(T0.AddSeconds(23), running: false, busy: false));
+        stop.Next(T0.AddSeconds(24), running: false, busy: false);
+        Assert.Equal(QuestionableStopAction.Fail, stop.Next(T0.AddSeconds(35), running: false, busy: false));
+    }
+
+    [Fact]
+    public void Running_again_for_a_while_gives_the_restarts_back()
+    {
+        var stop = new QuestionableStop(maxRestarts: 1);
+        stop.Next(T0, running: false, busy: false);
+        Assert.Equal(QuestionableStopAction.Restart, stop.Next(T0.AddSeconds(11), running: false, busy: false));
+        stop.Next(T0.AddSeconds(12), running: true, busy: false);
+        stop.Next(T0.AddSeconds(200), running: true, busy: false);
+        stop.Next(T0.AddSeconds(201), running: false, busy: false);
+        Assert.Equal(QuestionableStopAction.Restart, stop.Next(T0.AddSeconds(212), running: false, busy: false));
     }
 }
 

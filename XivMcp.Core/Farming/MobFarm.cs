@@ -81,3 +81,14 @@ public static class MobFarm
     /// <summary>How close to stand to the target: melee roles (tank, melee DPS) next to it, everyone else at casting range.</summary>
     public static float Range(byte role) => role is 1 or 2 ? 2.5f : 20f;
 }
+
+/// <summary>A monster near the character, as far as defending against it goes.</summary>
+public readonly record struct NearbyMonster(ulong Id, float Distance, bool TargetsMe, bool Alive);
+
+/// <summary>Whom to fight back when something attacks the character that isn't the monster being farmed.</summary>
+public static class Defense
+{
+    /// <summary>The nearest living monster that has the character targeted, or null when nothing attacks.</summary>
+    public static ulong? Attacker(IEnumerable<NearbyMonster> monsters) =>
+        monsters.Where(m => m.Alive && m.TargetsMe).OrderBy(m => m.Distance).Select(m => (ulong?)m.Id).FirstOrDefault();
+}

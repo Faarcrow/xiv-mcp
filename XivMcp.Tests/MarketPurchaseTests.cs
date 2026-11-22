@@ -75,6 +75,26 @@ public class MarketPurchaseTests
     }
 
     [Fact]
+    public void A_big_stack_that_costs_more_than_the_wanted_items_at_the_limit_is_too_dear()
+    {
+        // 4 Deepeye Tears wanted at most 490 each; only a stack of 20 at 480 was left: 10,080 gil for 4 needed.
+        Assert.True(MarketPurchase.TooDear(total: 10_080, wanted: 4, maxPrice: 490));
+        // 1 Boar Hide at most 700; a stack of 4 at 700.
+        Assert.True(MarketPurchase.TooDear(total: 2_940, wanted: 1, maxPrice: 700));
+    }
+
+    [Fact]
+    public void Buying_a_few_extra_within_the_limit_for_the_wanted_ones_is_fine()
+    {
+        // 9 wanted at most 240: 2,016 gil incl. 5 % tax is within 9 x 240 + tax.
+        Assert.False(MarketPurchase.TooDear(total: 1_988, wanted: 9, maxPrice: 240));
+        // A cheap stack (99 at 1) for 1 wanted at most 500.
+        Assert.False(MarketPurchase.TooDear(total: 104, wanted: 1, maxPrice: 500));
+        // 3 at the limit plus the 5 % tax.
+        Assert.False(MarketPurchase.TooDear(total: 1_575, wanted: 3, maxPrice: 500));
+    }
+
+    [Fact]
     public void One_missing_is_singular()
     {
         var message = MarketPurchase.Shortfall("Rroneek Fleece", wanted: 2, got: 1, spent: 5, nextPrice: null, maxPrice: 10);

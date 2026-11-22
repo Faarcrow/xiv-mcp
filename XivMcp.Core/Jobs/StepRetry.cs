@@ -21,10 +21,16 @@ public static class StepRetry
         "BetweenAreas",
         "loading a zone",
         "did not send the listings",
+        "The market board did not open",
+        "Can't log out in combat",
         "No character is currently logged in",
         "Can't change gear right now",
         "The character is casting",
+        // A meld right after a crafting list: the crafting window is still closing.
+        "Can't meld right now",
         "Artisan's solver hung",
+        // A gearset switch right after a fight: the game equips the set but changes the job only once combat is over.
+        "but the job did not change",
         // Questionable often gives up right after a teleport or a craft and goes on fine when started again; a real stop
         // (a duty, a level) still parks the job once the retries are used up.
         "Questionable stopped on its own",

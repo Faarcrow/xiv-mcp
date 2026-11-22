@@ -38,4 +38,19 @@ public class ShopUnlocksTests
     {
         Assert.Null(ShopUnlocks.MissingQuest([], soldForGil: false, _ => false));
     }
+
+    [Fact]
+    public void AUniqueItemAlreadyLearnedIsNotBoughtAgain()
+    {
+        // A master recipe book once read: the scrip exchange refuses to sell it again.
+        Assert.True(ShopUnlocks.AlreadyLearned(unlockable: true, unlocked: true, unique: true));
+    }
+
+    [Fact]
+    public void ItemsNotLearnedYetOrNotUniqueCanBeBought()
+    {
+        Assert.False(ShopUnlocks.AlreadyLearned(unlockable: true, unlocked: false, unique: true));
+        Assert.False(ShopUnlocks.AlreadyLearned(unlockable: true, unlocked: true, unique: false));
+        Assert.False(ShopUnlocks.AlreadyLearned(unlockable: false, unlocked: false, unique: true));
+    }
 }

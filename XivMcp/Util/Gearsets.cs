@@ -103,6 +103,10 @@ internal static class Gearsets
     /// </summary>
     public static async Task<Set> Switch(string query, CancellationToken ct, bool replaceMissing = true, List<string>? steps = null)
     {
+        // A window that holds the character (the retainer list AutoRetainer's retainer sense opens at a bell, a shop) makes the
+        // game ignore the gearset: close it first.
+        if (await Game.Run(() => Recovery.Occupied).ConfigureAwait(false) && await Recovery.Run(ct).ConfigureAwait(false) is { } freed)
+            steps?.AddRange(freed.Actions);
         var set = await Game.RunLoggedIn(() =>
         {
             var s = Resolve(query);

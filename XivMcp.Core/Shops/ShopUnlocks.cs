@@ -21,4 +21,10 @@ public static class ShopUnlocks
         if (quests.Count == 0 || quests.Any(q => q == 0 || completed(q))) return null;
         return quests[0];
     }
+
+    /// <summary>
+    /// A unique item that unlocks something (a master recipe book, say) and is already learned: shops refuse to sell it again,
+    /// and it would be of no use.
+    /// </summary>
+    public static bool AlreadyLearned(bool unlockable, bool unlocked, bool unique) => unlockable && unlocked && unique;
 }
