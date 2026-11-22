@@ -22,6 +22,14 @@ public class PromptTemplateTests
     }
 
     [Fact]
+    public void Text_macros_in_the_window_do_not_matter()
+    {
+        // As read from the yes/no window: a line break macro where the window wraps the text.
+        const string prompt = "This item is unique and untradable. Are you \u0002\u0010\u0001\u0003certain you wish to sell it?";
+        Assert.True(PromptTemplate.Matches(prompt, ["This item is unique and untradable. Are you certain you wish to sell it?"]));
+    }
+
+    [Fact]
     public void Other_prompts_do_not_match()
     {
         Assert.False(PromptTemplate.Matches("Discard the weathered saw?", ReplaceMissing));

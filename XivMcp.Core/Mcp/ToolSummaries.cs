@@ -103,7 +103,7 @@ public static class ToolSummaries
         ["sort_inventory"] = "Sorts your bags, armoury, saddlebag or a retainer inventory with the game's own sorting.",
         ["move_items"] = "Moves items between your bags, armoury, saddlebag, retainers and chest, one at a time.",
         ["open_retainer"] = "Calls a retainer at the summoning bell.",
-        ["close_retainer"] = "Dismisses the retainer you are talking to.",
+        ["close_retainer"] = "Dismisses the retainer you are talking to. Asks you first if it can still buy back what it sold.",
         ["transfer_retainer_items"] = "Moves stacks of items between your retainers and your bags.",
         ["refresh_retainer_inventories"] = "Calls each retainer once at a summoning bell next to you, so XIV MCP knows what they hold.",
         ["assign_venture"] = "Sends a retainer on a venture. Costs venture tokens.",
@@ -122,7 +122,7 @@ public static class ToolSummaries
         ["revoke_approval"] = "Withdraws a spending approval you have given.",
         ["sell_item"] = "Lists an item through a retainer, just below the cheapest offer. Prices far too low are refused.",
         ["retrieve_listing"] = "Takes market listings of an item back from a retainer, into your bags or the retainer's inventory.",
-        ["sell_to_vendor"] = "Sells items from your bags to a merchant for gil, while the shop is open.",
+        ["sell_to_vendor"] = "Sells items from your bags for gil, at a merchant's shop or through a retainer at a summoning bell.",
         ["reprice_listings"] = "Undercuts cheaper offers on your listings. Cuts of more than 30 percent are skipped.",
         ["get_sale_history"] = "Calls a retainer at the summoning bell to look at their recent sales.",
 

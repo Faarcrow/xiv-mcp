@@ -4,9 +4,33 @@ using System.Linq;
 
 namespace XivMcp.Shops;
 
+/// <summary>What a bag slot holds: the item (0 when empty), whether it is high quality, and how many.</summary>
+public readonly record struct SlotContent(uint ItemId, bool Hq, int Quantity);
+
 /// <summary>Which stacks to sell to a vendor. The game sells whole stacks from the inventory's context menu.</summary>
 public static class VendorSale
 {
+    /// <summary>
+    /// Null when the slot still holds the stack planned for sale (same item, quality and quantity); otherwise why it doesn't. The
+    /// bags are read before the player is asked about untradable items, which can take minutes, so they may have sorted, moved or
+    /// used the stack meanwhile, and selling the slot then would sell something else.
+    /// </summary>
+    public static string? Changed(SlotContent planned, SlotContent? now)
+    {
+        if (now is not { ItemId: not 0, Quantity: > 0 } held) return "the slot is empty now";
+        if (held.ItemId != planned.ItemId) return "another item is in the slot now";
+        if (held.Hq != planned.Hq) return held.Hq ? "the slot holds the high-quality one now" : "the slot holds the normal-quality one now";
+        if (held.Quantity != planned.Quantity) return $"the slot holds {held.Quantity} now, not {planned.Quantity}";
+        return null;
+    }
+
+    /// <summary>
+    /// Whether the game's warning about a unique and untradable item may be answered Yes for this stack: only when the player
+    /// approved selling that item, and the slot still holds the planned stack (not another untradable item moved there).
+    /// </summary>
+    public static bool MayConfirmUntradable(SlotContent planned, SlotContent? now, IReadOnlySet<uint> approved) =>
+        approved.Contains(planned.ItemId) && Changed(planned, now) is null;
+
     /// <summary>
     /// The indexes of the stacks to sell, smallest first (so the big stacks are what stays): all of them, at most
     /// <paramref name="quantity"/> items, and never so many that fewer than <paramref name="keep"/> remain.
@@ -27,4 +51,17 @@ public static class VendorSale
         }
         return picked;
     }
+
+    /// <summary>
+    /// Whether to answer Yes to a question the game asks while selling: its "Sell … for … gil?", and its warning about a unique
+    /// and untradable item only when <paramref name="sellUntradable"/> is set. Anything else gets No. The prompts are given as
+    /// their text sheet rows' fixed pieces (see <see cref="Ui.PromptTemplate"/>).
+    /// </summary>
+    public static bool Confirms(string prompt, IReadOnlyList<string> sellPrompt, IReadOnlyList<string> untradableWarning, bool sellUntradable) =>
+        Ui.PromptTemplate.Matches(prompt, sellPrompt)
+        || (sellUntradable && Ui.PromptTemplate.Matches(prompt, untradableWarning));
+
+    /// <summary>Whether the question is the game's warning about selling a unique and untradable item.</summary>
+    public static bool IsUntradableWarning(string prompt, IReadOnlyList<string> untradableWarning) =>
+        Ui.PromptTemplate.Matches(prompt, untradableWarning);
 }

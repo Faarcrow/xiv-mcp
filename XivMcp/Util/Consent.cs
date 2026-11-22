@@ -85,6 +85,21 @@ internal static class Consent
             : "The player declined in game; nothing was done.");
     }
 
+    /// <summary>The permission gate, whose session approvals and audit log the questions during a call share (set at startup).</summary>
+    public static ToolGate? Gate { get; set; }
+
+    /// <summary>
+    /// Asks during a call of XIV MCP's own <paramref name="tool"/> (see <see cref="ToolGate.AskDuringCallAsync"/>): the assistant is
+    /// offered "Approve for this session", which then covers the same <paramref name="scopes"/> until XIV MCP reloads; plugins are
+    /// asked every time. <paramref name="request"/> builds the question, told whether to offer the session. True when approved.
+    /// </summary>
+    public static async Task<bool> AskDuringCall(string tool, IReadOnlyList<string> scopes, Caller? caller, Func<bool, Request> request, TimeSpan timeout, CancellationToken ct)
+    {
+        Task<ApprovalDecision> Show(bool offerSession) => Ask(request(offerSession), timeout, ct);
+        if (Gate is not { } gate) return await Show(false).ConfigureAwait(false) != ApprovalDecision.Denied;
+        return await gate.AskDuringCallAsync(tool, scopes, request(false).Title, caller, Show).ConfigureAwait(false);
+    }
+
     public static void Answer(Request request, ApprovalDecision decision)
     {
         Svc.Log.Information($"[MCP] Player answered {decision}: {request.Title}");

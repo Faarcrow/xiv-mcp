@@ -251,6 +251,46 @@ public sealed class ToolGate(IPolicyStore store, IApprovalGate gate, IGameProbe 
     }
 
     /// <summary>
+    /// Whether a question asked during a call may offer "Approve for this session": only to the assistant. What XIV MCP's own tools
+    /// ask about during a call (selling an untradable item, dismissing a retainer that can still buy back what it sold) can't be
+    /// undone, and actions like that ask a plugin every time.
+    /// </summary>
+    public static bool OffersSessionTo(Caller? caller) => caller is not { IsPlugin: true };
+
+    /// <summary>
+    /// One of XIV MCP's own tools asks the player during a call, e.g. whether an untradable item may be sold. The question is
+    /// skipped when the caller approved every one of <paramref name="scopes"/> (one per item, say) for this session. Such answers
+    /// are kept in <see cref="Sessions"/>, as the caller's own (as for tool approvals: a plugin's never cover the assistant, or the
+    /// other way round), so they end where the other session approvals end. Each question, and each one a session approval
+    /// answered, is audited. True when approved.
+    /// </summary>
+    /// <param name="ask">Shows the question and returns the answer; its argument says whether to offer "Approve for this session".</param>
+    public async Task<bool> AskDuringCallAsync(string tool, IReadOnlyList<string> scopes, string summary, Caller? caller, Func<bool, Task<ApprovalDecision>> ask)
+    {
+        var offerSession = OffersSessionTo(caller);
+        // The same owner as for XIV MCP's own tools in InvokeBuiltInAsync: the plugin, or XIV MCP itself for the assistant.
+        var owner = caller?.Plugin?.Id ?? ToolProvider.Core.Id;
+        string Key(string scope) => "ask:" + scope;
+        AuditEntry Entry(string decision) => new()
+        {
+            Utc = now(), ProviderId = ToolProvider.Core.Id, ProviderName = ToolProvider.Core.DisplayName, Tool = tool, Kind = "approval",
+            Summary = summary, Capabilities = scopes, Decision = decision, BuiltIn = true, Caller = caller?.Id ?? Caller.Assistant().Id,
+        };
+
+        if (offerSession && scopes.Count > 0 && scopes.All(s => Sessions.Has(owner, tool, Key(s))))
+        {
+            audit.Add(Entry("approved_session"));
+            return true;
+        }
+        var answer = await ask(offerSession).ConfigureAwait(false);
+        if (offerSession && answer == ApprovalDecision.ApprovedForSession)
+            foreach (var s in scopes) Sessions.Add(owner, tool, Key(s));
+        // "For this session" only counts as such where it was offered.
+        audit.Add(Entry(answer == ApprovalDecision.Denied ? "denied" : offerSession ? Decision(answer) : "approved"));
+        return answer != ApprovalDecision.Denied;
+    }
+
+    /// <summary>
     /// Whether a tool is offered to the assistant at all: false for XIV MCP's own tools whose group the player turned off. Third-party
     /// tools and tools missing from the catalog aren't affected (they have their own switches and fail-safes).
     /// </summary>

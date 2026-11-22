@@ -20,6 +20,7 @@ internal static class RetainerUi
 {
     private const uint AddonEntrustOrWithdraw = 2378; // "Entrust or withdraw items."
     private const uint AddonQuit = 2383;              // "Quit."
+    private const uint AddonItemBuyback = 2397;       // "Item buyback.": shown while the retainer holds items it sold for you
 
     private static readonly string[] InventoryAddons = ["InventoryRetainerLarge", "InventoryRetainer"];
 
@@ -69,13 +70,16 @@ internal static class RetainerUi
         }
     }
 
-    /// <summary>Opens the inventory of the named retainer. The retainer list (summoning bell) or another retainer must be open.</summary>
-    public static Task Open(string name, CancellationToken ct) => Open(name, false, ct);
+    /// <summary>
+    /// Opens the inventory of the named retainer. The retainer list (summoning bell) or another retainer must be open. Another
+    /// retainer is dismissed first (see <see cref="Close"/>), so <paramref name="caller"/> is who the player is told asks for that.
+    /// </summary>
+    public static Task Open(string name, Permissions.Caller? caller, CancellationToken ct) => Open(name, false, caller, ct);
 
-    /// <summary>Selects the named retainer and stops at its menu (instead of opening the inventory).</summary>
-    public static Task OpenMenu(string name, CancellationToken ct) => Open(name, true, ct);
+    /// <summary>Selects the named retainer and stops at its menu (instead of opening the inventory), as <see cref="Open(string, Permissions.Caller?, CancellationToken)"/> does.</summary>
+    public static Task OpenMenu(string name, Permissions.Caller? caller, CancellationToken ct) => Open(name, true, caller, ct);
 
-    private static async Task Open(string name, bool menuOnly, CancellationToken ct)
+    private static async Task Open(string name, bool menuOnly, Permissions.Caller? caller, CancellationToken ct)
     {
         // Right after using the bell the list (and the retainer data) can still be on its way.
         var waitUntil = DateTime.UtcNow.AddSeconds(10);
@@ -84,7 +88,7 @@ internal static class RetainerUi
         var target = await Svc.Framework.RunOnFrameworkThread(() => ResolveSortedIndex(name)).ConfigureAwait(false);
         var current = await Svc.Framework.RunOnFrameworkThread(() => ActiveRetainerName).ConfigureAwait(false);
         if (current is not null && !current.Equals(target.Name, StringComparison.Ordinal))
-            await Close(ct).ConfigureAwait(false);
+            await Close(caller, ct).ConfigureAwait(false);
 
         var state = new StepState();
         var deadline = DateTime.UtcNow.AddSeconds(20);
@@ -97,8 +101,13 @@ internal static class RetainerUi
         }
     }
 
-    /// <summary>Closes the current retainer and returns to the retainer list. No-op if no retainer is open.</summary>
-    public static async Task Close(CancellationToken ct)
+    /// <summary>
+    /// Closes the current retainer and returns to the retainer list. No-op if no retainer is open. A retainer that sold items to
+    /// a vendor for you can buy them back only until it is dismissed, and the game asks before dismissing it: the player is asked
+    /// in game first, and if they decline, the retainer stays open and this throws. <paramref name="caller"/> (null: the assistant)
+    /// is who the player is told asks, and whose answers for the session count: a plugin's dismissal never rides on the assistant's.
+    /// </summary>
+    public static async Task Close(Permissions.Caller? caller, CancellationToken ct)
     {
         var state = new StepState();
         var deadline = DateTime.UtcNow.AddSeconds(20);
@@ -107,13 +116,59 @@ internal static class RetainerUi
             ct.ThrowIfCancellationRequested();
             if (DateTime.UtcNow > deadline) throw new ToolException("Timed out closing the retainer. Current windows may need manual attention.");
             if (await Svc.Framework.RunOnFrameworkThread(() => CloseStep(state)).ConfigureAwait(false)) return;
+            if (state.BuybackHeldBy is { } retainer && !state.DiscardBuyback)
+            {
+                Consent.Request Request(bool offerSession) => new($"Dismiss {retainer}?",
+                    [$"{retainer} still holds items sold to a vendor for you (\"Item buyback\" in the retainer's menu).",
+                     "Once the retainer is dismissed, they can no longer be bought back."])
+                {
+                    Deadline = DateTime.UtcNow + BuybackConsentTimeout,
+                    Source = caller?.Name ?? "your AI assistant",
+                    Warning = "Can't be undone.",
+                    Risk = Permissions.RiskLevel.High,
+                    OfferSession = offerSession,
+                };
+                // Kept (and audited) as close_retainer's question, whichever tool dismisses the retainer.
+                if (!await Consent.AskDuringCall("close_retainer", ["dismiss_with_buyback"], caller, Request, BuybackConsentTimeout, ct).ConfigureAwait(false))
+                {
+                    var declined = new ToolException($"{retainer} still holds items it sold for you, which can be bought back (\"Item buyback\" in its menu) " +
+                                                     "only until it is dismissed, and the player did not approve dismissing it in game. The retainer stays open.");
+                    declined.Data[DismissalDeclinedKey] = true;
+                    throw declined;
+                }
+                state.DiscardBuyback = true;
+                deadline = DateTime.UtcNow.AddSeconds(20);
+            }
             await Task.Delay(150, ct).ConfigureAwait(false);
         }
     }
 
+    private static readonly TimeSpan BuybackConsentTimeout = TimeSpan.FromMinutes(2);
+
+    private const string DismissalDeclinedKey = "XivMcp.RetainerUi.DismissalDeclined";
+
+    /// <summary>
+    /// Whether <paramref name="e"/> is <see cref="Close"/> giving up because the player declined dismissing a retainer that can still
+    /// buy back what it sold: trying to close it again would only ask the same question again.
+    /// </summary>
+    public static bool DismissalDeclined(Exception e) => e.Data.Contains(DismissalDeclinedKey);
+
+    /// <summary>
+    /// "Your retainer will be unable to process item buyback requests once recalled. Are you sure you wish to proceed?", from the
+    /// retainer's dialogue sheets (ASK_RETURN_WITH_BUYBACK; the bell's copy reads the same).
+    /// </summary>
+    private static IEnumerable<string> QuitWithBuybackPrompts =>
+        new[] { ("custom/000/CmnDefRetainerCall_00010", 215u), ("custom/005/CmnDefRetainerBell_00544", 52u) }
+            .Select(r => Svc.Data.GetExcelSheet<Tools.QuestDialogueText>(name: r.Item1)?.GetRowOrDefault(r.Item2)?.Value.ExtractText())
+            .OfType<string>().Where(t => t.Length > 0);
+
     private sealed class StepState
     {
         public DateTime LastAction = DateTime.MinValue;
+        public bool DiscardBuyback;
+        public bool QuitWithBuyback;
+        /// <summary>Set when the retainer menu shows "Item buyback." and the player hasn't approved giving it up yet.</summary>
+        public string? BuybackHeldBy;
         public bool Throttled => DateTime.UtcNow - LastAction < TimeSpan.FromMilliseconds(800);
         public void Acted() => LastAction = DateTime.UtcNow;
     }
@@ -182,8 +237,25 @@ internal static class RetainerUi
                 if (Ready(addon)) Addon(addon)->Close(true);
             state.Acted();
         }
+        else if (state.QuitWithBuyback && Ready("SelectYesno"))
+        {
+            var prompt = GameWindows.YesNoPrompt() ?? "";
+            var expected = QuitWithBuybackPrompts.Any(p => Ui.PromptTemplate.Matches(prompt, [p]));
+            Fire(Addon("SelectYesno"), true, expected ? 0 : 1);
+            if (!expected) throw new ToolException($"Quitting the retainer showed an unexpected prompt: \"{prompt}\". It was answered No.");
+            state.Acted();
+        }
         else if (Ready("SelectString"))
         {
+            if (HasMenuEntry(AddonItemBuyback))
+            {
+                if (!state.DiscardBuyback)
+                {
+                    state.BuybackHeldBy = ActiveRetainerName ?? "The retainer"; // Close asks the player, then comes back here
+                    return false;
+                }
+                state.QuitWithBuyback = true;
+            }
             if (!SelectMenuEntry(AddonQuit)) throw new ToolException("Could not find \"Quit\" in the retainer menu.");
             state.Acted();
         }
@@ -303,6 +375,14 @@ internal static class RetainerUi
             }
         }
         return false;
+    }
+
+    /// <summary>Whether the open SelectString menu has an entry with this text sheet row's text (icons and placeholders aside).</summary>
+    private static bool HasMenuEntry(uint addonTextRow)
+    {
+        var full = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Addon>().GetRow(addonTextRow).Text.ExtractText();
+        var wanted = (full.IndexOf('(') is > 0 and var cut ? full[..cut] : full).Trim();
+        return MenuEntries()?.Any(e => e.Contains(wanted, StringComparison.OrdinalIgnoreCase)) == true;
     }
 
     /// <summary>Entries of the currently open SelectString menu, or null if none is open.</summary>
