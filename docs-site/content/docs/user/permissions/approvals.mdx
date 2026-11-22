@@ -10,7 +10,7 @@ Some actions are never decided by your assistant alone:
 - recalling a running venture,
 - completing a trade with another player, with what both sides hold,
 - selling untradable items to a vendor,
-- dismissing a retainer while items it sold for you can still be bought back,
+- closing a merchant's shop or dismissing a retainer while items XIV MCP sold there can still be bought back, when they are worth more than your limit (15,000 gil by default, 0 never asks) or their value is unknown (see [Buyback protection](/docs/user/features/market#buyback-protection)),
 - desynthesizing items, with the whole list (it can't be undone, so it asks on every call and can't be approved for the session),
 - and anything set to *Ask*, whether a module of XIV MCP or a capability of a third-party plugin.
 
@@ -45,7 +45,7 @@ They open an approval window in the game, and nothing happens until you answer.
 
 A plugin can also ask in the middle of a call, with the real numbers, such as "Buy 3 Hi-Potions for 1,200 gil".
 
-XIV MCP itself asks in the middle of a call before selling untradable items or dismissing a retainer that can still buy back what it sold. Your assistant is offered *approve for this session*: for untradable items it covers just the items it asked about, and it lasts until XIV MCP restarts. When a plugin asks for these, the window asks every time and only offers *once*.
+XIV MCP itself asks in the middle of a call before selling untradable items, or before closing a shop or dismissing a retainer that can still buy back what it sold (whichever tool closes it, recovery included). The question lists the items and their market value. Your assistant is offered *approve for this session*: for untradable items it covers just the items it asked about, and it lasts until XIV MCP restarts. When a plugin asks for these, the window asks every time and only offers *once*.
 
 One `buy_item` call asks once, for the whole quantity, even when it buys in several batches of 99. Buying the same item again in a new call asks again.
 
