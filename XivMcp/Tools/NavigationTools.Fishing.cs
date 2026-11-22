@@ -99,25 +99,34 @@ internal static partial class NavigationTools
 
     /// <summary>
     /// Gets off the mount near a fishing spot. The path often ends in the air over the river or on a steep bank, where the game
-    /// refuses to land: move to the walkable ground nearest the character (then to the ground found for the spot) and try again.
+    /// refuses to land (the nearest walkable point is often that same rock): try the ground in rings around the character, nearest
+    /// first, then the ground found for the spot.
     /// </summary>
     private static async Task LandNear(Vector3 ground, List<string> steps, CancellationToken ct)
     {
+        List<Vector3>? candidates = null;
         for (var attempt = 0; ; attempt++)
         {
             try { await GetOffMount(steps, ct).ConfigureAwait(false); return; }
-            catch (ToolException) when (attempt < 3)
+            catch (ToolException) when (attempt < 6)
             {
-                var landing = await Game.Run(() =>
+                candidates ??= await Game.Run(() =>
                 {
                     var here = Svc.Objects.LocalPlayer?.Position ?? ground;
-                    var near = attempt == 0
-                        ? Ipc<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPointReachable", here, 20f, 60f)
-                        : null;
-                    var to = near ?? ground;
-                    MoveCloseTo(to, 1f, Svc.Condition[ConditionFlag.InFlight]);
-                    return to;
+                    var list = new List<Vector3>();
+                    foreach (var radius in new[] { 5.0, 10.0, 15.0 })
+                        foreach (var (x, z) in XivMcp.Fishing.ShoreFinder.Sweep(here.X, here.Z, radius, 8))
+                            if (Ipc<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPointReachable", new Vector3((float)x, here.Y, (float)z), 4f, 40f) is { } p &&
+                                Vector2.Distance(new(p.X, p.Z), new(here.X, here.Z)) > 3 &&
+                                list.All(q => Vector3.Distance(q, p) > 3))
+                                list.Add(p);
+                    list.Sort((a, b) => Vector3.Distance(a, here).CompareTo(Vector3.Distance(b, here)));
+                    list.Add(ground);
+                    return list;
                 }).ConfigureAwait(false);
+                if (attempt >= candidates.Count) throw;
+                var landing = candidates[attempt];
+                await Game.Run(() => MoveCloseTo(landing, 1f, Svc.Condition[ConditionFlag.InFlight])).ConfigureAwait(false);
                 steps.Add($"Could not land here; moving to the ground at {landing.X:0}/{landing.Z:0} and trying again.");
                 var until = DateTime.UtcNow.AddSeconds(8);
                 await Task.Delay(300, ct).ConfigureAwait(false);
