@@ -105,6 +105,8 @@ public sealed class ToolGate(IPolicyStore store, IApprovalGate gate, IGameProbe 
     {
         caller ??= Caller.Assistant();
         args.Caller = caller;
+        // Flows into everything this call awaits, and ends with this (async) method.
+        CallScope.Current = caller;
         if (tool.Provider.Trust != ProviderTrust.ThirdParty) return await InvokeBuiltInAsync(tool, args, ct, inJob, caller).ConfigureAwait(false);
 
         var provider = tool.Provider;
