@@ -144,6 +144,8 @@ public class BuiltInCapabilityTests
     [InlineData("navigate_to", Capabilities.MoveCharacter)]
     [InlineData("move_items", Capabilities.MoveItems)]
     [InlineData("get_game_status", Capabilities.ReadGame)]
+    [InlineData("sell_item", Capabilities.TradeItems)]
+    [InlineData("sell_to_vendor", Capabilities.TradeItems)]
     public void Built_in_tools_say_what_they_can_do(string tool, string capability)
     {
         Assert.Contains(capability, BuiltInCapabilities.Of(Core(tool)));

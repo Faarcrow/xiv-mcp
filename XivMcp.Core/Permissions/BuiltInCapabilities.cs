@@ -60,6 +60,7 @@ public static class BuiltInCapabilities
         ["buy_from_market_board"] = [GameUi, MoveCharacter, SpendGil],
         ["sell_item"] = [GameUi, TradeItems],
         ["retrieve_listing"] = [GameUi, TradeItems],
+        ["sell_to_vendor"] = [GameUi, TradeItems],
         ["reprice_listings"] = [GameUi, TradeItems],
         ["set_macro"] = [EditSettings, ChatSend],
         ["clear_macro"] = [EditSettings],
