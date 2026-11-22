@@ -15,6 +15,7 @@ public class StepRetryTests
     [InlineData("recovery: Not free: The character is casting, which recovery doesn't interrupt.")]
     [InlineData("Can't meld right now (busy: crafting, gathering, talking or in a cutscene).")]
     [InlineData("Questionable stopped on its own while on True as Steel. Its window says why (a duty, a level, a step it cannot do).")]
+    [InlineData("Equipped gearset 27 (Fisher), but the job did not change to FSH within 30 seconds.")]
     public void Passing_game_states_are_retried(string error) => Assert.True(StepRetry.ShouldRetry(error, attempts: 1));
 
     [Theory]
