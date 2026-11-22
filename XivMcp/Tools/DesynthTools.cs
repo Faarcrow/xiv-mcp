@@ -56,7 +56,7 @@ internal static class DesynthTools
                           "with the game's \"Desynthesize entire stack\", about 3 seconds an item; a stack used only partly goes one item at a " +
                           "time, about 5 seconds each (for many items run it as a job step, start_job). The player approves the whole list in " +
                           "game first, every time: desynthesis can't be undone. Items the game would ask an extra tick for (unique, untradable, " +
-                          "collectable, with materia melded) and gear a gearset uses are left alone and reported. Returns how many of each item " +
+                          "collectable, with materia melded), glamoured gear and gear a gearset uses are left alone and reported. Returns how many of each item " +
                           "were desynthesized and what came into the bags. Desynthesis must be unlocked; out of combat, not mounted, with free " +
                           "bag slots for the results. Compare the vendor and market value of the item with what it gives first. Requires " +
                           "'Items & retainers' in /xivmcp.",
@@ -176,6 +176,7 @@ internal static class DesynthTools
         var im = InventoryManager.Instance();
         var stacks = new List<Stack>();
         var melded = false;
+        var glamoured = false;
         var collectable = item.AlwaysCollectable;
         foreach (var container in Bags)
         {
@@ -188,10 +189,11 @@ internal static class DesynthTools
                 if (hq is { } wantHq && slot->IsHighQuality() != wantHq) continue;
                 stacks.Add(new Stack(container, i, item.RowId, (int)slot->Quantity, slot->IsHighQuality()));
                 melded |= slot->GetMateriaCount() > 0;
+                glamoured |= slot->GlamourId != 0;
                 collectable |= slot->IsCollectable();
             }
         }
-        var refused = Desynthesis.Refusal(new DesynthItem(item.Desynth > 0, item.IsUnique, item.IsUntradable, collectable, melded, gearsets.Contains(item.RowId)));
+        var refused = Desynthesis.Refusal(new DesynthItem(item.Desynth > 0, item.IsUnique, item.IsUntradable, collectable, melded, gearsets.Contains(item.RowId), glamoured));
         if (refused is not null) return new ItemPlan(item.RowId, name, stacks, [], refused);
         try { return new ItemPlan(item.RowId, name, stacks, Desynthesis.Plan(stacks.Select(s => s.Quantity).ToList(), quantity, keep), null); }
         catch (ArgumentOutOfRangeException e) { throw new ToolException($"{name}: {e.Message}"); }

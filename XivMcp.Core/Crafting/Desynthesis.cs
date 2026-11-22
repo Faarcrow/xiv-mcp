@@ -8,7 +8,7 @@ namespace XivMcp.Crafting;
 public sealed record DesynthStep(int Stack, int Count, bool Bulk);
 
 /// <summary>What an item is like, as far as desynthesizing it from the bags goes.</summary>
-public sealed record DesynthItem(bool Desynthesizable, bool Unique, bool Untradable, bool Collectable, bool Melded, bool InGearset);
+public sealed record DesynthItem(bool Desynthesizable, bool Unique, bool Untradable, bool Collectable, bool Melded, bool InGearset, bool Glamoured);
 
 /// <summary>Which items to desynthesize, and how many from which stacks.</summary>
 public static class Desynthesis
@@ -37,13 +37,15 @@ public static class Desynthesis
 
     /// <summary>
     /// Why the item is left alone, or null when it may be desynthesized. The game asks for an extra tick in its window for unique,
-    /// untradable, collectable and melded items; those are left for the player to do by hand, as is gear a gear set uses.
+    /// untradable, collectable and melded items; those are left for the player to do by hand, as is gear a gear set uses. So is
+    /// glamoured gear: whether the game warns before its glamour goes with it is unknown, and a lost glamour can't be had back.
     /// </summary>
     public static string? Refusal(DesynthItem item) => item switch
     {
         { Desynthesizable: false } => "It can't be desynthesized.",
         { InGearset: true } => "A gear set uses it.",
         { Melded: true } => "It has materia melded; desynthesize it by hand if you mean to.",
+        { Glamoured: true } => "It is glamoured; desynthesize it by hand if you mean to.",
         { Unique: true } or { Untradable: true } => "It is unique or untradable; desynthesize it by hand if you mean to.",
         { Collectable: true } => "It is a collectable; desynthesize it by hand if you mean to.",
         _ => null,

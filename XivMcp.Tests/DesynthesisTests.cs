@@ -75,7 +75,7 @@ public class DesynthesisTests
         Assert.Throws<ArgumentOutOfRangeException>(() => Desynthesis.Plan(Stacks, quantity: null, keep: -1));
     }
 
-    private static readonly DesynthItem Fish = new(Desynthesizable: true, Unique: false, Untradable: false, Collectable: false, Melded: false, InGearset: false);
+    private static readonly DesynthItem Fish = new(Desynthesizable: true, Unique: false, Untradable: false, Collectable: false, Melded: false, InGearset: false, Glamoured: false);
 
     [Fact]
     public void A_plain_item_may_go()
@@ -92,5 +92,11 @@ public class DesynthesisTests
         Assert.NotNull(Desynthesis.Refusal(Fish with { Collectable = true }));
         Assert.NotNull(Desynthesis.Refusal(Fish with { Melded = true }));
         Assert.NotNull(Desynthesis.Refusal(Fish with { InGearset = true }));
+    }
+
+    [Fact]
+    public void Glamoured_gear_is_left_alone_like_melded_gear()
+    {
+        Assert.Equal("It is glamoured; desynthesize it by hand if you mean to.", Desynthesis.Refusal(Fish with { Glamoured = true }));
     }
 }
