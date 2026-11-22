@@ -291,7 +291,9 @@ internal static class RetainerTools
                         catch (ToolException ex)
                         {
                             results.Add(new RefreshResult(name, false, null, null, ex.Message));
-                            try { await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false); } catch (ToolException) { /* report the original problem */ }
+                            // A declined dismissal stays declined: closing again would only show the player the same question twice.
+                            if (!RetainerUi.DismissalDeclined(ex))
+                                try { await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false); } catch (ToolException) { /* report the original problem */ }
                             break;
                         }
                         await Task.Delay(config.NextMoveDelay(), ct).ConfigureAwait(false);

@@ -129,8 +129,12 @@ internal static class RetainerUi
                     OfferSession = true,
                 };
                 if (!await Consent.AskOrSession("retainer:discard_buyback", caller, request, BuybackConsentTimeout, ct).ConfigureAwait(false))
-                    throw new ToolException($"{retainer} still holds items it sold for you, which can be bought back (\"Item buyback\" in its menu) " +
-                                            "only until it is dismissed, and the player did not approve dismissing it in game. The retainer stays open.");
+                {
+                    var declined = new ToolException($"{retainer} still holds items it sold for you, which can be bought back (\"Item buyback\" in its menu) " +
+                                                     "only until it is dismissed, and the player did not approve dismissing it in game. The retainer stays open.");
+                    declined.Data[DismissalDeclinedKey] = true;
+                    throw declined;
+                }
                 state.DiscardBuyback = true;
                 deadline = DateTime.UtcNow.AddSeconds(20);
             }
@@ -139,6 +143,14 @@ internal static class RetainerUi
     }
 
     private static readonly TimeSpan BuybackConsentTimeout = TimeSpan.FromMinutes(2);
+
+    private const string DismissalDeclinedKey = "XivMcp.RetainerUi.DismissalDeclined";
+
+    /// <summary>
+    /// Whether <paramref name="e"/> is <see cref="Close"/> giving up because the player declined dismissing a retainer that can still
+    /// buy back what it sold: trying to close it again would only ask the same question again.
+    /// </summary>
+    public static bool DismissalDeclined(Exception e) => e.Data.Contains(DismissalDeclinedKey);
 
     /// <summary>
     /// "Your retainer will be unable to process item buyback requests once recalled. Are you sure you wish to proceed?", from the
