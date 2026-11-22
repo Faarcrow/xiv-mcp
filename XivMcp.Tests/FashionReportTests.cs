@@ -78,6 +78,23 @@ public class GearSlotTests
     {
         Assert.Equal(slot, GearSlots.FromName(name));
     }
+
+    [Fact]
+    public void Every_slot_has_a_name_in_container_order()
+    {
+        Assert.Equal(GearSlots.SoulCrystal + 1, GearSlots.Names.Length);
+        Assert.Equal("MainHand", GearSlots.Name(GearSlots.MainHand));
+        Assert.Equal("Waist", GearSlots.Name(GearSlots.Waist));
+        Assert.Equal("RightRing", GearSlots.Name(GearSlots.RingRight));
+        Assert.Equal("LeftRing", GearSlots.Name(GearSlots.RingLeft));
+        Assert.Equal("SoulCrystal", GearSlots.Name(GearSlots.SoulCrystal));
+    }
+
+    [Fact]
+    public void A_slot_beyond_the_named_ones_is_shown_as_its_number()
+    {
+        Assert.Equal("14", GearSlots.Name(14));
+    }
 }
 
 public class WeeklyReportTests

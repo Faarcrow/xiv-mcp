@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json;
 
@@ -10,6 +11,13 @@ public static class GearSlots
 {
     public const int MainHand = 0, OffHand = 1, Head = 2, Body = 3, Hands = 4, Waist = 5, Legs = 6, Feet = 7, Ears = 8, Neck = 9,
                      Wrists = 10, RingRight = 11, RingLeft = 12, SoulCrystal = 13;
+
+    /// <summary>The slots' names as tools report them, indexed by slot number.</summary>
+    public static readonly ImmutableArray<string> Names =
+        ["MainHand", "OffHand", "Head", "Body", "Hands", "Waist", "Legs", "Feet", "Ears", "Neck", "Wrists", "RightRing", "LeftRing", "SoulCrystal"];
+
+    /// <summary>A slot's name; a slot past the named ones (the container may grow) shows as its number rather than failing.</summary>
+    public static string Name(int slot) => slot >= 0 && slot < Names.Length ? Names[slot] : slot.ToString();
 
     /// <summary>
     /// The slot an item goes in, from its EquipSlotCategory fields in sheet order (main hand … soul crystal; 1 = goes there, -1 =

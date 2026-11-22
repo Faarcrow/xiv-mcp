@@ -11,9 +11,6 @@ namespace XivMcp.Tools;
 
 internal static class InventoryTools
 {
-    private static readonly string[] EquipSlots =
-        ["MainHand", "OffHand", "Head", "Body", "Hands", "Waist", "Legs", "Feet", "Ears", "Neck", "Wrists", "RightRing", "LeftRing", "SoulCrystal"];
-
     /// <summary>Named groups of containers; raw GameInventoryType names are accepted as well.</summary>
     private static readonly Dictionary<string, GameInventoryType[]> Groups = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -213,7 +210,7 @@ internal static class InventoryTools
                 var ilvls = new List<uint>();
                 foreach (var item in items)
                 {
-                    var slot = item.InventorySlot < EquipSlots.Length ? EquipSlots[item.InventorySlot] : item.InventorySlot.ToString();
+                    var slot = Fashion.GearSlots.Name((int)item.InventorySlot);
                     if (item.IsEmpty) { slots.Add(new { slot, empty = true }); continue; }
                     var row = Svc.Data.GetExcelSheet<Item>().GetRowOrDefault(item.BaseItemId);
                     var desc = DescribeItem(item, true);
