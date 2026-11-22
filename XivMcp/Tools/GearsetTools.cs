@@ -19,18 +19,30 @@ internal static class GearsetTools
         yield return new McpTool
         {
             Name = "list_gearsets",
-            Description = "The saved gearsets (number as in game, name, job, item level, items missing from the inventory) and which one is worn.",
-            Handler = async (_, _) =>
+            Description = "The saved gearsets (number as in game, name, job, item level, items missing from the inventory) and which one is worn. " +
+                          "With 'gearset' (number, name or job) one set with its pieces; with items=true every set with its pieces: per slot " +
+                          "the item, quality, item level, materia, dyes and glamour as saved, and where the piece is now (worn, armoury chest " +
+                          "or bags, with container and slot) or that it is missing. Two pieces never share one item, so a ring worn on both " +
+                          "hands needs two. Use it to see which sets use an item before selling, discarding or replacing it.",
+            InputSchema = """
+                {
+                  "type": "object",
+                  "properties": {
+                    "gearset": { "type": "string", "description": "Only this set, with its pieces: number, name or job." },
+                    "items": { "type": "boolean", "description": "List every set's pieces (default false)." }
+                  }
+                }
+                """,
+            Handler = async (args, _) =>
             {
-                var sets = await Game.RunLoggedIn(Gearsets.All).ConfigureAwait(false);
+                var query = args.String("gearset");
+                var withItems = args.Bool("items", false);
+                var sets = await Game.RunLoggedIn(() => query is null ? Gearsets.All() : [Gearsets.Resolve(query)]).ConfigureAwait(false);
+                if (query is not null) return Summary(sets[0], true);
                 return new
                 {
                     current = sets.FirstOrDefault(s => s.Current)?.Number,
-                    gearsets = sets.Select(s => new
-                    {
-                        number = s.Number, name = s.Name, job = s.Job, jobName = s.JobName, itemLevel = s.ItemLevel,
-                        kind = s.CombatJob ? "combat" : "crafter/gatherer", current = s.Current, missingItems = s.MissingItems > 0 ? s.MissingItems : (int?)null,
-                    }).ToList(),
+                    gearsets = sets.Select(s => Summary(s, withItems)).ToList(),
                 };
             },
         };
@@ -144,6 +156,50 @@ internal static class GearsetTools
             missingItems = after.MissingItems > 0 ? after.MissingItems : (int?)null,
             steps,
         };
+    }
+
+    private static Dictionary<string, object?> Summary(Gearsets.Set s, bool withItems)
+    {
+        var d = new Dictionary<string, object?>
+        {
+            ["number"] = s.Number, ["name"] = s.Name, ["job"] = s.Job, ["jobName"] = s.JobName, ["itemLevel"] = s.ItemLevel,
+            ["kind"] = s.CombatJob ? "combat" : "crafter/gatherer", ["current"] = s.Current,
+        };
+        if (s.MissingItems > 0) d["missingItems"] = s.MissingItems;
+        if (withItems) d["items"] = s.Pieces.Select(Describe).ToList();
+        return d;
+    }
+
+    private static Dictionary<string, object?> Describe(Gearsets.Piece p)
+    {
+        var id = p.ItemId % GearsetPieces.HqOffset;
+        var row = Svc.Data.GetExcelSheet<Item>().GetRowOrDefault(id);
+        var d = new Dictionary<string, object?>
+        {
+            ["slot"] = Fashion.GearSlots.Name(p.Slot),
+            ["itemId"] = id,
+            ["name"] = row?.Name.ExtractText(),
+        };
+        if (p.ItemId >= GearsetPieces.HqOffset) d["hq"] = true;
+        if (row is { } r) d["itemLevel"] = r.LevelItem.RowId;
+        var materia = p.Materia
+            .Select(m => Svc.Data.GetExcelSheet<Materia>().GetRowOrDefault(m.Type) is { } mr && m.Grade < mr.Item.Count
+                ? Excel.Name(mr.Item[m.Grade])
+                : $"materia {m.Type}/{m.Grade}")
+            .ToList();
+        if (materia.Count > 0) d["materia"] = materia;
+        var dyes = p.Stains.Where(st => st != 0).Select(st => Excel.Ref<Stain>(st)).ToList();
+        if (dyes.Count > 0) d["dyes"] = dyes;
+        if (p.GlamourId != 0) d["glamour"] = new { itemId = p.GlamourId % GearsetPieces.HqOffset, name = Excel.NameOf<Item>(p.GlamourId % GearsetPieces.HqOffset) };
+        if (p.Held is { } h)
+        {
+            d["location"] = new { container = h.Container, slot = h.Slot };
+            if (h.ItemId != p.ItemId) d["note"] = h.ItemId >= GearsetPieces.HqOffset
+                ? "Saved as normal quality; only the high-quality one is held."
+                : "Saved as high quality; only the normal-quality one is held.";
+        }
+        else if (p.Missing) d["missing"] = true;
+        return d;
     }
 
     /// <summary>Asks the game's gearset module to save, delete or rename (index 0-based). Framework thread.</summary>

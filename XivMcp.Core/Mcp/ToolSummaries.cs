@@ -40,7 +40,7 @@ public static class ToolSummaries
         ["get_glamour_dresser"] = "Looks at the items in your glamour dresser.",
         ["get_job_actions"] = "Lists the actions of a job, with their levels and cooldowns.",
         ["get_hotbars"] = "Looks at what is on your hotbars.",
-        ["list_gearsets"] = "Lists your saved gear sets.",
+        ["list_gearsets"] = "Lists your saved gear sets and what each one holds.",
         ["get_cache_status"] = "Checks how recently XIV MCP saw your retainers, chests and submersibles.",
         ["wait_for_cache_refresh"] = "Waits up to 10 minutes for you to open a retainer or chest, so XIV MCP sees it again.",
         ["run_self_test"] = "Checks that XIV MCP and its connected plugins work. Changes nothing.",

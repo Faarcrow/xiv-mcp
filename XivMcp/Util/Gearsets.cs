@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Dalamud.Game.ClientState.Conditions;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using Lumina.Excel.Sheets;
+using XivMcp.Gear;
 using XivMcp.Mcp;
 
 namespace XivMcp.Util;
@@ -13,7 +14,14 @@ namespace XivMcp.Util;
 /// <summary>The player's gearsets (the game's Gear Set list) and switching between them, like clicking one in the list.</summary>
 internal static class Gearsets
 {
-    public sealed record Set(int Number, string Name, uint JobId, string Job, string JobName, int ItemLevel, bool Current, bool CombatJob, int MissingItems);
+    public sealed record Set(int Number, string Name, uint JobId, string Job, string JobName, int ItemLevel, bool Current, bool CombatJob, int MissingItems,
+                             IReadOnlyList<Piece> Pieces);
+
+    /// <summary>
+    /// A piece of a set as saved: slot (numbered like <see cref="Fashion.GearSlots"/>), item id (with the HQ offset), glamour, dyes and
+    /// materia (type, grade), and the held item it would be equipped from (null when missing, or when the containers aren't loaded).
+    /// </summary>
+    public sealed record Piece(int Slot, uint ItemId, uint GlamourId, byte[] Stains, (ushort Type, byte Grade)[] Materia, GearsetPieces.Held? Held, bool Missing);
 
     /// <summary>All gearsets; Number is 1-based like in game. Framework thread.</summary>
     public static unsafe List<Set> All()
@@ -22,20 +30,31 @@ internal static class Gearsets
         if (module == null) return [];
         var jobs = Svc.Data.GetExcelSheet<ClassJob>();
         var current = module->CurrentGearsetIndex;
-        var owned = OwnedGear();
+        var held = HeldGear() is { } items ? new GearsetPieces.Holdings(items) : null;
         var sets = new List<Set>();
         for (var i = 0; i < 100; i++)
         {
             if (!module->IsValidGearset(i)) continue;
             var e = module->GetGearset(i);
             var job = jobs.GetRowOrDefault(e->ClassJob);
+            var saved = new List<(int Slot, uint ItemId)>();
+            for (var s = 0; s < e->Items.Length; s++) saved.Add((s, e->Items[s].ItemId));
             // The game sets ItemMissing only after an equip attempt failed, so look for each piece ourselves (when the containers are loaded).
-            var missing = 0;
-            foreach (ref var item in e->Items)
-                if (item.ItemId != 0 && (owned is null ? item.Flags.HasFlag(RaptureGearsetModule.GearsetItemFlag.ItemMissing) : !owned.Contains(item.ItemId % 1_000_000)))
-                    missing++;
+            var found = held is null ? null : held.Match(saved).ToDictionary(m => m.Slot, m => m.Held);
+            var pieces = new List<Piece>();
+            for (var s = 0; s < e->Items.Length; s++)
+            {
+                ref var item = ref e->Items[s];
+                if (!GearsetPieces.IsPiece(s, item.ItemId)) continue;
+                var materia = new List<(ushort, byte)>();
+                for (var m = 0; m < item.Materia.Length; m++)
+                    if (item.Materia[m] != 0) materia.Add((item.Materia[m], item.MateriaGrades[m]));
+                var at = found?.GetValueOrDefault(s);
+                pieces.Add(new Piece(s, item.ItemId, item.GlamourId, [item.Stain0Id, item.Stain1Id], [.. materia], at,
+                    GearsetPieces.IsMissing(found is not null, at, item.Flags.HasFlag(RaptureGearsetModule.GearsetItemFlag.ItemMissing))));
+            }
             sets.Add(new Set(i + 1, e->NameString, e->ClassJob, job?.Abbreviation.ExtractText() ?? "?", job?.Name.ExtractText() ?? "?", e->ItemLevel,
-                i == current, job is { } j && j.DohDolJobIndex < 0, missing));
+                i == current, job is { } j && j.DohDolJobIndex < 0, pieces.Count(p => p.Missing), pieces));
         }
         return sets;
     }
@@ -54,20 +73,32 @@ internal static class Gearsets
         FFXIVClientStructs.FFXIV.Client.Game.InventoryType.ArmorySoulCrystal,
     ];
 
-    /// <summary>Item ids (without the HQ offset) in the bags, worn and in the armoury chest; null while a container isn't loaded. Framework thread.</summary>
-    private static unsafe HashSet<uint>? OwnedGear()
+    /// <summary>The items in the bags, worn and in the armoury chest; null while a container isn't loaded. Framework thread.</summary>
+    private static unsafe List<GearsetPieces.Held>? HeldGear()
     {
         var inv = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
         if (inv == null) return null;
-        var ids = new HashSet<uint>();
+        var held = new List<GearsetPieces.Held>();
         foreach (var type in GearContainers)
         {
             var c = inv->GetInventoryContainer(type);
             if (c == null || !c->IsLoaded) return null;
+            var place = type switch
+            {
+                FFXIVClientStructs.FFXIV.Client.Game.InventoryType.EquippedItems => GearsetPieces.Place.Equipped,
+                >= FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory1 and <= FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory4 => GearsetPieces.Place.Bags,
+                _ => GearsetPieces.Place.Armoury,
+            };
+            var container = type.ToString();
             for (var i = 0; i < c->Size; i++)
-                if (c->GetInventorySlot(i)->ItemId is var id and not 0) ids.Add(id % 1_000_000);
+            {
+                var slot = c->GetInventorySlot(i);
+                if (slot->ItemId == 0) continue;
+                var hq = slot->Flags.HasFlag(FFXIVClientStructs.FFXIV.Client.Game.InventoryItem.ItemFlags.HighQuality);
+                held.Add(new GearsetPieces.Held(slot->ItemId + (hq ? GearsetPieces.HqOffset : 0), place, container, i));
+            }
         }
-        return ids;
+        return held;
     }
 
     public static bool IsCombatJob(uint jobId) => Svc.Data.GetExcelSheet<ClassJob>().GetRowOrDefault(jobId) is { } j && j.DohDolJobIndex < 0 && jobId != 0;
