@@ -102,7 +102,7 @@ internal static class CraftPlanTools
                 // 1. The Artisan list (this reloads Artisan, so it comes before the in-memory Raphael work).
                 var name = args.String("list_name") ?? $"MCP: {Items.Name(targets[0].ItemId)}" + (totalBatches > 1 ? $" (batch {batchIndex})" : "");
                 var existing = await Game.Run(() => ExistingList(name)).ConfigureAwait(false);
-                var (listId, backup) = await CraftGatherTools.WriteCraftingList(existing, name, plan.Steps.Select(s => (s.RecipeId, s.Crafts)).ToList(), append: false).ConfigureAwait(false);
+                var (listId, backup) = await CraftGatherTools.WriteCraftingList(existing, name, plan.Steps.Select(s => (s.RecipeId, s.Crafts)).ToList(), append: false, skipIfEnough: args.Bool("count_existing", false)).ConfigureAwait(false);
 
                 // 2. Raphael: select it per recipe and build the solutions, one at a time.
                 var raphael = new List<object>();

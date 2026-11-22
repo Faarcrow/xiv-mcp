@@ -445,7 +445,7 @@ internal static class CraftGatherTools
     /// Creates a list (listArg null) or edits one, with recipes in the given order (Artisan crafts in list order), by editing Artisan's
     /// config with Artisan briefly unloaded. Returns the list id and the backup path.
     /// </summary>
-    internal static async Task<(int Id, string? Backup)> WriteCraftingList(string? listArg, string? name, List<(uint RecipeId, int Quantity)> recipes, bool append)
+    internal static async Task<(int Id, string? Backup)> WriteCraftingList(string? listArg, string? name, List<(uint RecipeId, int Quantity)> recipes, bool append, bool? skipIfEnough = true)
     {
         int listId = 0;
         var backup = await PluginTools.ModifyPluginJson(Artisan, null, root =>
@@ -484,7 +484,8 @@ internal static class CraftGatherTools
             if (name is not null) list["Name"] = name;
             // A list that is started again (after a pause, a repair stop, a failed step) must not craft everything once more:
             // with "skip if enough" Artisan leaves out what the bags already hold.
-            list["SkipIfEnough"] = true;
+            // Unless the caller wants the full quantities crafted (count_existing off: a turn-in needs a new HQ piece although an NQ one is in the bags).
+            if (skipIfEnough is { } skip) list["SkipIfEnough"] = skip;
             var target = (JsonArray)list["Recipes"]!;
             foreach (var (recipeId, quantity) in recipes)
             {

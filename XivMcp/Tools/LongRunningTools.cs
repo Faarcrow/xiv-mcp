@@ -303,7 +303,7 @@ internal static class LongRunningTools
                 string? resumeNote = null;
                 if (resume.Shrink is { } left && !resume.AllDone)
                 {
-                    await CraftGatherTools.WriteCraftingList(listId.ToString(), null, left.Select(r => (r.RecipeId, r.Crafts)).ToList(), append: false).ConfigureAwait(false);
+                    await CraftGatherTools.WriteCraftingList(listId.ToString(), null, left.Select(r => (r.RecipeId, r.Crafts)).ToList(), append: false, skipIfEnough: null).ConfigureAwait(false);
                     await WaitForPlugin(CraftGatherTools.Artisan, ct).ConfigureAwait(false);
                     written = left;
                     resumeNote = $"Continued an earlier run: the list was shrunk to the {left.Sum(r => r.Crafts)} craft(s) still missing.";
@@ -469,7 +469,7 @@ internal static class LongRunningTools
     {
         try
         {
-            await CraftGatherTools.WriteCraftingList(listId.ToString(), null, original.Select(r => (r.RecipeId, r.Crafts)).ToList(), append: false).ConfigureAwait(false);
+            await CraftGatherTools.WriteCraftingList(listId.ToString(), null, original.Select(r => (r.RecipeId, r.Crafts)).ToList(), append: false, skipIfEnough: null).ConfigureAwait(false);
             return "The Artisan list has its original quantities again.";
         }
         catch (Exception ex)
