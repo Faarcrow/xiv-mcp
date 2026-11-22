@@ -73,6 +73,7 @@ public static class ToolSummaries
         ["farm_duty_item"] = "Runs a dungeon that drops an item until you have as many as you want.",
         ["equip_items"] = "Puts on pieces of gear from your bags or armoury chest.",
         ["retrieve_glamour_item"] = "Takes an item out of your glamour dresser or armoire into your bags.",
+        ["store_in_armoire"] = "Puts items from your bags into the armoire.",
         ["get_fashion_report"] = "Looks at this week's Fashion Report: theme, hints, ready-made sets and which items you have.",
         ["present_fashion_report"] = "Puts on your Fashion Report outfit and presents it to the Masked Rose for judging.",
         ["complete_fashion_report"] = "Gets, dyes and puts on this week's easy Fashion Report set, then presents it for judging.",

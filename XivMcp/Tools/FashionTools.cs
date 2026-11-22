@@ -72,6 +72,30 @@ internal static class FashionTools
 
         yield return new McpTool
         {
+            Name = "store_in_armoire",
+            Description = "Puts items from the bags into the armoire, which keeps them without using bag or retainer space (only items the " +
+                          "armoire accepts: quest and event gear, crafter and gatherer tools from class quests, ...). Needs the player in an inn room " +
+                          "(navigate_to inn first): XIV MCP walks to the armoire, opens it and stores each item. Items it doesn't accept are reported " +
+                          "and stay in the bags. Requires 'Items & retainers' in /xivmcp.",
+            InputSchema = """
+                {
+                  "type": "object",
+                  "properties": {
+                    "items": { "type": "array", "items": { "type": ["string", "integer"] }, "minItems": 1, "description": "Item names or ids." }
+                  },
+                  "required": ["items"]
+                }
+                """,
+            ReadOnly = false,
+            Handler = async (args, ct) =>
+            {
+                var names = (args.Node("items")?.AsArray() ?? throw new ToolException("'items' is required.")).Select(n => n?.ToString() ?? "").ToList();
+                return await ToArmoire(names, ct).ConfigureAwait(false);
+            },
+        };
+
+        yield return new McpTool
+        {
             Name = "retrieve_glamour_item",
             Description = "Takes an item out of the glamour dresser or the armoire into the bags. Needs the player in an inn room (navigate_to " +
                           "inn first): XIV MCP walks to the dresser or armoire, opens it and takes the item out. 'from' says where (default: the " +
@@ -556,6 +580,39 @@ internal static class FashionTools
         await Game.Run(() => Close("Cabinet")).ConfigureAwait(false);
         if (!arrived) throw new ToolException($"{name} did not arrive in the bags.");
         return new { item = name, from = "armoire" };
+    }
+
+    private static async Task<object> ToArmoire(List<string> names, CancellationToken ct)
+    {
+        var stored = new List<string>();
+        var skipped = new List<object>();
+        var todo = new List<(string Name, uint ItemId, uint Row)>();
+        foreach (var n in names)
+        {
+            var item = await Game.Run(() => ResolveItem(n)).ConfigureAwait(false);
+            var name = item.Name.ExtractText();
+            if (CabinetRow(item.RowId) is not { } row) { skipped.Add(new { item = name, reason = "the armoire doesn't take it" }); continue; }
+            if (!await Game.Run(() => Find(item.RowId) is not null).ConfigureAwait(false)) { skipped.Add(new { item = name, reason = "not in the bags" }); continue; }
+            todo.Add((name, item.RowId, row));
+        }
+        if (todo.Count == 0) return new { stored, skipped };
+
+        await OpenStorage("Armoire", Armoires, "Cabinet", ct).ConfigureAwait(false);
+        if (!await WaitFor(() => { unsafe { return UIState.Instance()->Cabinet.IsCabinetLoaded(); } }, TimeSpan.FromSeconds(10), ct).ConfigureAwait(false))
+            throw new ToolException("The armoire's items did not load.");
+        foreach (var (name, itemId, row) in todo)
+        {
+            ct.ThrowIfCancellationRequested();
+            var already = await Game.Run(() => { unsafe { return UIState.Instance()->Cabinet.IsItemInCabinet(row); } }).ConfigureAwait(false);
+            if (already) { skipped.Add(new { item = name, reason = "already in the armoire (one copy each)" }); continue; }
+            var ok = await Game.Run(() => { unsafe { return UIState.Instance()->Cabinet.StoreCabinetItem(row); } }).ConfigureAwait(false);
+            // Stored once it has left the bags.
+            if (ok && await WaitFor(() => Find(itemId) is null, TimeSpan.FromSeconds(8), ct).ConfigureAwait(false)) stored.Add(name);
+            else skipped.Add(new { item = name, reason = "the game didn't store it" });
+            await Task.Delay(500, ct).ConfigureAwait(false);
+        }
+        await Game.Run(() => Close("Cabinet")).ConfigureAwait(false);
+        return new { stored, skipped };
     }
 
     /// <summary>Walks to the dresser or armoire in the inn room and opens it; a menu in between is answered with its first entry.</summary>

@@ -208,6 +208,13 @@ public class GoldSaucerStandaloneTests
         foreach (var t in new[] { "equip_items", "retrieve_glamour_item", "get_fashion_report", "present_fashion_report", "complete_fashion_report" })
             Assert.NotNull(ToolSummaries.For(t));
     }
+
+    [Fact]
+    public void Storing_in_the_armoire_is_an_items_tool_with_a_summary()
+    {
+        Assert.Equal("items_retainers", PermissionCatalog.CoreTools["store_in_armoire"]);
+        Assert.NotNull(ToolSummaries.For("store_in_armoire"));
+    }
 }
 
 public class FashionScheduleTests
