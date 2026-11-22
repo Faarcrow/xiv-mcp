@@ -90,12 +90,13 @@ for (const m of integrationSource.matchAll(/new\("(\w+)", "([^"]+)", "([^"]+)", 
   const workarounds = extras.match(/Workarounds = (\w+)\.All/)?.[1];
   integrations.push({ id: m[1], title: m[2], description: m[3], tools, alsoWith, helpers, standalone, workarounds });
 }
-// Workarounds.cs: public static class QuestionableWorkarounds { ... new("id", "does", "instead") ... }
+// Workarounds.cs: public static class QuestionableWorkarounds { ... new("id", "does", "without", "checked against") ... }
 const quoted = String.raw`"((?:[^"\\]|\\.)*)"`;
+const unquote = (s) => s.replace(/\\"/g, '"');
 const workaroundLists = Object.fromEntries([...read('XivMcp.Core/Integrations/Workarounds.cs').matchAll(/public static class (\w+)\s*\{([\s\S]*?)\n\}/g)].map((c) => [
   c[1],
-  [...c[2].matchAll(new RegExp(String.raw`new\("(\w+)",\s*` + quoted + String.raw`,\s*` + quoted + String.raw`\)`, 'g'))]
-    .map((w) => ({ id: w[1], does: w[2].replace(/\\"/g, '"'), instead: w[3].replace(/\\"/g, '"') })),
+  [...c[2].matchAll(new RegExp(String.raw`new\("(\w+)",\s*` + quoted + String.raw`,\s*` + quoted + String.raw`,\s*"([\d.]+)"\)`, 'g'))]
+    .map((w) => ({ id: w[1], does: unquote(w[2]), without: unquote(w[3]), checkedAgainst: w[4] })),
 ]));
 for (const i of integrations)
   if (i.workarounds && !workaroundLists[i.workarounds]?.length) warnings.push(`${i.id}'s workarounds (${i.workarounds}) were not found in Workarounds.cs.`);
@@ -288,11 +289,11 @@ for (const i of integrations) {
   if (workarounds.length) {
     const name = plugin(i.id).name;
     req.push(
-      `Where ${name} falls short, XIV MCP steps in. To have ${name} do everything its own way, untick **Work around gaps in ${name}** in its module's options. See [Workarounds](/docs/user/compatibility#workarounds).`,
+      `Where ${name} falls short, XIV MCP steps in. See [Workarounds](/docs/user/compatibility#workarounds).`,
       '',
-      '| XIV MCP | With the workarounds off |',
-      '|---|---|',
-      ...workarounds.map((w) => `| ${text(w.does)} | ${text(w.instead)} |`),
+      `| XIV MCP | What ${name} does on its own | Checked against |`,
+      '|---|---|---|',
+      ...workarounds.map((w) => `| ${text(w.does)} | ${text(w.without)} | ${w.checkedAgainst} |`),
       '',
     );
   }

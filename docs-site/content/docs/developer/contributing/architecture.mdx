@@ -38,6 +38,8 @@ Every tool has a `ToolProvider` with a trust level, which decides how its calls 
 
 `RegistrationReview` decides when a third-party plugin needs the player's decision again: only when its registration grows.
 
+An integration can also step in where its plugin falls short. Each such workaround is declared in its integration's `Workarounds` (`XivMcp.Core/Integrations/Workarounds.cs`), with the plugin version it was checked against, and the job that uses it counts it in a `WorkaroundLog`, so the result shows which ones fired on which plugin version.
+
 ## The plugin API
 
 `PluginApi` (`XivMcp/Api`) exposes the IPC gates. Plugins cannot share types, so everything crossing the boundary is a JSON string. `ToolDefinition` (`XivMcp.Core/Api`) validates registrations. The contract is described in [Raw IPC](/docs/developer/plugin-api/raw-ipc).

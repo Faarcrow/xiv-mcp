@@ -24,8 +24,6 @@ Which tool uses which plugin, what happens without it, and where to get each one
 
 ## Workarounds
 
-Some integrations do more than drive their plugin: where the plugin falls short, XIV MCP steps in. Questionable, for example, waits at a "meld materia" step even when the item already has materia, so XIV MCP presses its Skip for you. These workarounds are on by default.
+Some integrations do more than drive their plugin: where the plugin falls short, XIV MCP steps in. Questionable, for example, waits at a "meld materia" step even when the item already has materia, so XIV MCP presses its Skip for you.
 
-If you would rather have a plugin behave exactly as it does when you use it yourself, untick **Work around gaps in** that plugin in its module's options: `/xivmcp` → **Modules**, its card under **Integrations maintained by XIV MCP** (the options show while its changes are not denied). XIV MCP then still starts, watches and stops the plugin, and leaves everything else to it. A step the plugin can't get past ends the job with the plugin's reason.
-
-A job's result lists the workarounds it used and how often (`workaroundsUsed`), so you can see which ones a plugin still needs. Each plugin's workarounds, with what happens without them, are on [Plugins XIV MCP uses](/docs/user/plugins).
+Each workaround is listed on [Plugins XIV MCP uses](/docs/user/plugins), under its plugin, with what the plugin does on its own and the plugin version it was last checked against. A job's result names the plugin version it ran with and the workarounds it used (`workarounds`). Once a plugin fixes a gap, its workaround stops showing up there and can be removed. If one acts up after a plugin update, compare the two versions to see what changed.

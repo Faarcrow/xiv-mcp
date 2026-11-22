@@ -371,24 +371,6 @@ internal sealed partial class ConfigWindow : Window
                 "switch this on if you are fine with that. Reloading a plugin and changing its settings still ask.");
     }
 
-    /// <summary>Whether an integration works around its plugin's gaps, with what each workaround does and what happens without it.</summary>
-    private void DrawWorkarounds(XivMcp.Integrations.IntegrationCatalog.Integration integration)
-    {
-        var config = plugin.Config;
-        var name = XivMcp.Integrations.PluginCatalog.Find(integration.PluginId)?.Name ?? integration.DisplayName;
-        ImGui.Spacing();
-        var on = config.WorkaroundsOn(integration.PluginId);
-        if (ImGui.Checkbox($"Work around gaps in {name}##workarounds-{integration.PluginId}", ref on))
-        {
-            if (on) config.WorkaroundsOff.Remove(integration.PluginId);
-            else config.WorkaroundsOff.Add(integration.PluginId);
-            config.Save();
-        }
-        Tooltip($"Where {name} falls short, XIV MCP steps in. Turn this off to have {name} do everything its own way: XIV MCP still " +
-                $"starts, watches and stops it, and a step {name} can't get past ends the job with its reason.\n\n" +
-                string.Join("\n\n", integration.Workarounds.Select(w => $"{w.Does} Off: {w.Instead}")));
-    }
-
     /// <summary>Optional gil limit above which a gil purchase asks too.</summary>
     private void DrawGilLimit()
     {

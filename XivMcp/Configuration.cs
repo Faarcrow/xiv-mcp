@@ -101,14 +101,6 @@ public sealed class Configuration : IPluginConfiguration
     public bool UseMountForWalks { get; set; } = true;
 
     /// <summary>
-    /// The plugins (by internal name) whose integration does without its workarounds (IntegrationCatalog's Workarounds), leaving the
-    /// plugin to do everything its own way. Empty by default: every integration works around its plugin's gaps.
-    /// </summary>
-    public System.Collections.Generic.HashSet<string> WorkaroundsOff { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-
-    public bool WorkaroundsOn(string pluginId) => !WorkaroundsOff.Contains(pluginId);
-
-    /// <summary>
     /// Developer tools (press_xivmcp_control, capture_ui_events): only in dev builds, and only when turned on here. Off by default, as
     /// capture_ui_events records what is clicked in game windows.
     /// </summary>
