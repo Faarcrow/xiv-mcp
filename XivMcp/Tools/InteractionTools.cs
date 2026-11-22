@@ -98,40 +98,46 @@ internal static class InteractionTools
         {
             Name = "close_window",
             Description = "Closes a game window: a main menu window (see list_windows), or a window that interact_with_object reported in " +
-                          "openedWindows (e.g. FreeCompanyChest, SelectString). Requires 'Game & navigation' in /xivmcp.",
+                          "openedWindows (e.g. FreeCompanyChest, SelectString). Closing a merchant's shop whose buyback holds items sold with sell_to_vendor " +
+                          "may ask the player first (see sell_to_vendor). Requires 'Game & navigation' in /xivmcp.",
             InputSchema = """
                 { "type": "object", "properties": { "window": { "type": "string", "description": "Window name / main command id from list_windows, or a window name from openedWindows." } }, "required": ["window"] }
                 """,
             ReadOnly = false,
-            Handler = (args, _) =>
+            Handler = async (args, ct) =>
             {
                 RequireEnabled();
                 var window = args.String("window") ?? throw new ToolException("'window' is required.");
                 var addon = InterestingAddons.FirstOrDefault(a => a.Equals(window, StringComparison.OrdinalIgnoreCase))
                             ?? (Svc.GameGui.GetAddonByName(window, 1) is { IsNull: false, IsVisible: true } ? window : null); // any open addon by its name (inspect_window lists them)
                 if (addon is not null)
-                    return Game.RunLoggedIn<object?>(() =>
+                {
+                    // The merchant's shop, or the conversation it belongs to: closing either ends the shop and its buyback.
+                    if (addon.Equals("Shop", StringComparison.OrdinalIgnoreCase) || EndsShop.Contains(addon))
+                        await Buyback.ConfirmShopClose(args.Caller, ct).ConfigureAwait(false);
+                    return await Game.RunLoggedIn<object?>(() =>
                     {
                         if (Svc.GameGui.GetAddonByName(addon, 1) is not { IsNull: false, IsVisible: true }) return new { window = addon, action = "already closed" };
                         CloseAddon(addon);
                         return new { window = addon, action = "closed" };
-                    });
+                    }).ConfigureAwait(false);
+                }
                 if (AgentWindow(window) is { } agentWindow)
-                    return Game.RunLoggedIn<object?>(() =>
+                    return await Game.RunLoggedIn<object?>(() =>
                     {
                         if (!AgentOpen(agentWindow.Id)) return new { window = agentWindow.Name, action = "already closed" };
                         AgentShow(agentWindow.Id, false);
                         return new { window = agentWindow.Name, action = "closed" };
-                    });
+                    }).ConfigureAwait(false);
                 var cmd = ResolveCommand(window);
-                return Game.RunLoggedIn<object?>(() =>
+                return await Game.RunLoggedIn<object?>(() =>
                 {
                     var open = IsOpen(cmd.RowId);
                     if (open == false) return new { window = cmd.Name.ExtractText(), action = "already closed" };
                     if (open is null) throw new ToolException($"Can't tell whether {cmd.Name.ExtractText()} is open, so it is not toggled blindly. Close it in game.");
                     Execute(cmd.RowId);
                     return new { window = cmd.Name.ExtractText(), action = "closed" };
-                });
+                }).ConfigureAwait(false);
             },
         };
 
@@ -142,13 +148,14 @@ internal static class InteractionTools
                           "holds the character in a conversation whose window vanished (interacting then fails with \"did not react\"). Clicks " +
                           "through dialogue, answers No, leaves menus, closes those windows (only shown ones: acting on a hidden delivery window " +
                           "crashed the game) and, as a last resort, presses Escape a few times. Never acts in combat, cutscenes or while loading. Job steps that fail or are stopped run this " +
-                          "on their own. Returns what it did and whether the character is free. Requires 'Game & navigation' in /xivmcp.",
+                          "on their own. A merchant's shop holding valuable items sold with sell_to_vendor in its buyback is only closed after the player approves it in game. " +
+                          "Returns what it did and whether the character is free. Requires 'Game & navigation' in /xivmcp.",
             ReadOnly = false,
-            Handler = async (_, ct) =>
+            Handler = async (args, ct) =>
             {
                 RequireEnabled();
                 await Game.RunLoggedIn(() => true).ConfigureAwait(false);
-                var result = await Recovery.Run(ct).ConfigureAwait(false);
+                var result = await Recovery.Run(ct, caller: args.Caller).ConfigureAwait(false);
                 return new { free = result.Recovered, actions = result.Actions, problem = result.Problem };
             },
         };
@@ -544,6 +551,9 @@ internal static class InteractionTools
         ["RetainerList", "SelectString", "Talk", "FreeCompanyChest", "CompanyCraftSupply", "AirShipExplorationResult", "SubmersibleExplorationResult",
          "Shop", "SelectYesno", "SelectIconString", "Repair", "Teleport", "TelepotTown", "InventoryRetainer", "InventoryRetainerLarge", "ContentsTutorial",
          "AirShipExploration", "SubmersibleExploration", "CompanyCraftRecipeNoteBook", "HousingSignBoard", "MiragePrismPrismBox", "MiragePrismMiragePlate", "Cabinet"];
+
+    /// <summary>The merchant's conversation windows: closing one while the shop is open ends the shop too.</summary>
+    private static readonly HashSet<string> EndsShop = new(StringComparer.OrdinalIgnoreCase) { "Talk", "SelectString", "SelectIconString" };
 
     private static List<string> VisibleAddons() =>
         InterestingAddons.Where(a => Svc.GameGui.GetAddonByName(a, 1) is { IsNull: false, IsVisible: true }).ToList();

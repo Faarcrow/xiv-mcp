@@ -170,7 +170,10 @@ internal static class ShopTools
                             if (window == "InclusionShop") await ShowInInclusionShop(item.RowId, steps, ct).ConfigureAwait(false);
                             if (window == "GrandCompanyExchange") await ShowInGcExchange(item.RowId, steps, ct).ConfigureAwait(false);
                             var bought = await Purchase(item.RowId, quantity, offer, check.Before, steps, ct, approval, args.Bool("up_to", false)).ConfigureAwait(false);
-                            await CloseShop(ct).ConfigureAwait(false);
+                            // The purchase is done either way: a shop kept open for its buyback is reported, not an error.
+                            string? shopLeftOpen = null;
+                            try { await CloseShop(args.Caller, ct).ConfigureAwait(false); }
+                            catch (ToolException e) when (Buyback.Declined(e)) { shopLeftOpen = e.Message; }
                             var after = await Game.Run(() => (Count: Items.CountReceived(item.RowId), Gil: Gil())).ConfigureAwait(false);
                             return new
                             {
@@ -181,6 +184,7 @@ internal static class ShopTools
                                 paidWith = isGil ? "gil" : "non-gil currency (approved in game)",
                                 gilSpent = isGil ? gilBefore - after.Gil : (long?)null,
                                 nowInBags = after.Count,
+                                shopLeftOpen,
                                 steps,
                             };
                         }
@@ -188,7 +192,7 @@ internal static class ShopTools
                         {
                             // A refused purchase, a declined approval or a page that doesn't sell the item: don't leave the shop open
                             // (the character stays busy and can't change gear until it closes).
-                            try { await CloseShop(CancellationToken.None).ConfigureAwait(false); }
+                            try { await CloseShop(args.Caller, CancellationToken.None).ConfigureAwait(false); }
                             catch (Exception closeError) { Svc.Log.Warning(closeError, "Closing the shop after a failed purchase failed"); }
                             throw;
                         }
@@ -718,8 +722,13 @@ internal static class ShopTools
             Fire(&yesno->AtkUnitBase, true, 0);
     }
 
-    private static async Task CloseShop(CancellationToken ct)
+    /// <summary>
+    /// Closes the shop window and leaves the vendor's menu. A merchant's gil shop whose buyback holds what sell_to_vendor sold asks
+    /// first (see <see cref="Buyback.ConfirmShopClose"/>) and stays open, throwing, when the player declines.
+    /// </summary>
+    private static async Task CloseShop(Permissions.Caller? caller, CancellationToken ct)
     {
+        await Buyback.ConfirmShopClose(caller, ct).ConfigureAwait(false);
         for (var i = 0; i < 10; i++)
         {
             var open = await Game.Run(() =>

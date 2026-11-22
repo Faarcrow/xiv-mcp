@@ -9,6 +9,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 using XivMcp.Mcp;
+using XivMcp.Shops;
 
 namespace XivMcp.Util;
 
@@ -104,7 +105,8 @@ internal static class RetainerUi
     /// <summary>
     /// Closes the current retainer and returns to the retainer list. No-op if no retainer is open. A retainer that sold items to
     /// a vendor for you can buy them back only until it is dismissed, and the game asks before dismissing it: the player is asked
-    /// in game first, and if they decline, the retainer stays open and this throws. <paramref name="caller"/> (null: the assistant)
+    /// in game first when they are worth more than the limit in /xivmcp or their value is unknown (see <see cref="Buyback"/>), and if
+    /// they decline, the retainer stays open and this throws. <paramref name="caller"/> (null: the assistant)
     /// is who the player is told asks, and whose answers for the session count: a plugin's dismissal never rides on the assistant's.
     /// </summary>
     public static async Task Close(Permissions.Caller? caller, CancellationToken ct)
@@ -118,9 +120,18 @@ internal static class RetainerUi
             if (await Svc.Framework.RunOnFrameworkThread(() => CloseStep(state)).ConfigureAwait(false)) return;
             if (state.BuybackHeldBy is { } retainer && !state.DiscardBuyback)
             {
-                Consent.Request Request(bool offerSession) => new($"Dismiss {retainer}?",
-                    [$"{retainer} still holds items sold to a vendor for you (\"Item buyback\" in the retainer's menu).",
-                     "Once the retainer is dismissed, they can no longer be bought back."])
+                // Asked only when what XIV MCP sold through this retainer is worth more than the player's limit, or its value is unknown
+                // (also when the player sold things themselves, which XIV MCP knows nothing about). A limit of 0 never asks.
+                var check = Buyback.CheckRetainer(retainer);
+                if (!check.Ask)
+                {
+                    state.DiscardBuyback = true;
+                    continue;
+                }
+                var details = new List<string> { $"{retainer} still holds items sold to a vendor for you (\"Item buyback\" in the retainer's menu)." };
+                if (check.Sales.Count > 0) details.AddRange(BuybackRule.Describe(check.Sales, check.Total));
+                details.Add("Once the retainer is dismissed, they can no longer be bought back.");
+                Consent.Request Request(bool offerSession) => new($"Dismiss {retainer}?", details)
                 {
                     Deadline = DateTime.UtcNow + BuybackConsentTimeout,
                     Source = caller?.Name ?? "your AI assistant",

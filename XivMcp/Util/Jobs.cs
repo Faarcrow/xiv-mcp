@@ -373,7 +373,7 @@ internal sealed class JobManager : IDisposable, ICache
             catch (Exception ex) { error = $"{ex.GetType().Name}: {ex.Message}"; Svc.Log.Error(ex, $"[MCP] Job step {step.Tool} failed"); }
 
             // A step that failed or was stopped can leave the character in a conversation or window that blocks everything after it.
-            var recovery = (error is not null || interrupted) && !runningPassive && !shutdown.IsCancellationRequested ? await Recover().ConfigureAwait(false) : null;
+            var recovery = (error is not null || interrupted) && !runningPassive && !shutdown.IsCancellationRequested ? await Recover(job).ConfigureAwait(false) : null;
 
             // Failures that only mean the game was briefly busy (still loading after travel, the market board not answering) are run again.
             var autoRetry = error is not null && !interrupted && XivMcp.Jobs.StepRetry.ShouldRetry(error, step.Attempts);
@@ -433,9 +433,10 @@ internal sealed class JobManager : IDisposable, ICache
             await Task.Delay(500, ct).ConfigureAwait(false);
     }
 
-    private async Task<Recovery.Result?> Recover()
+    /// <summary>Recovery after a step of <paramref name="job"/>, asking (where it must) in the name of whoever runs the job.</summary>
+    private async Task<Recovery.Result?> Recover(Job job)
     {
-        try { return await Recovery.Run(shutdown.Token).ConfigureAwait(false); }
+        try { return await Recovery.Run(shutdown.Token, caller: CallerOf(job)).ConfigureAwait(false); }
         catch (OperationCanceledException) { return null; }
         catch (Exception ex)
         {

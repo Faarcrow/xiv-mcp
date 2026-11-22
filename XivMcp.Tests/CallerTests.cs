@@ -123,6 +123,25 @@ public class CallerTests
     }
 
     [Fact]
+    public async Task Helpers_deep_inside_a_call_know_who_called()
+    {
+        // Recovery, run from inside navigate_to, asks the player before closing a shop: it must not answer with the AI's approvals for a plugin.
+        store.Core.Set("game_navigation", Access.Write, PolicyMode.Allow);
+        EnablePlugin(p => p.Modes[Capabilities.MoveCharacter] = PolicyMode.Allow);
+        Caller? seen = null;
+        var tool = new McpTool
+        {
+            Name = "navigate_to", Description = "d", ReadOnly = false,
+            Handler = async (_, _) => { await Task.Yield(); seen = CallScope.Current; return null; },
+        };
+        await Gate().InvokeAsync(tool, Args(), default, inJob: true, caller: FromPlugin);
+        Assert.Equal("plugin:HelloMcp", seen!.Id);
+        await Gate().InvokeAsync(tool, Args(), default);
+        Assert.Equal("assistant", seen!.ApprovalOwner);
+        Assert.Null(CallScope.Current); // only during the call
+    }
+
+    [Fact]
     public async Task Calls_without_a_caller_are_the_assistant_s()
     {
         store.Core.Set("game_navigation", Access.Write, PolicyMode.Allow);
@@ -144,6 +163,8 @@ public class BuiltInCapabilityTests
     [InlineData("navigate_to", Capabilities.MoveCharacter)]
     [InlineData("move_items", Capabilities.MoveItems)]
     [InlineData("get_game_status", Capabilities.ReadGame)]
+    [InlineData("sell_item", Capabilities.TradeItems)]
+    [InlineData("sell_to_vendor", Capabilities.TradeItems)]
     public void Built_in_tools_say_what_they_can_do(string tool, string capability)
     {
         Assert.Contains(capability, BuiltInCapabilities.Of(Core(tool)));

@@ -48,7 +48,10 @@ internal static class VendorTools
                           "market board first (get_market_prices). Items a vendor does not buy are reported and left alone. Untradable items " +
                           "are only sold after the player approves them in game (one question for all of them in the call); declined ones " +
                           "are left alone. A stack the player moved or changed meanwhile is left alone and reported under 'skipped'. Sold items can be bought back: from a merchant's buyback tab until the shop is closed, or from " +
-                          "the retainer's \"Item buyback\" until it is dismissed. Requires 'Market & purchases' in /xivmcp.",
+                          "the retainer's \"Item buyback\" until it is dismissed. Before XIV MCP itself closes that shop or dismisses that " +
+                          "retainer, the player is asked in game when what was sold there is worth more than their limit on the market " +
+                          "board (default 15,000 gil) or its value is unknown; if they decline, it stays open and the closing tool fails. " +
+                          "Requires 'Market & purchases' in /xivmcp.",
             InputSchema = """
                 {
                   "type": "object",
@@ -99,6 +102,14 @@ internal static class VendorTools
                     }
                     // Only what would really be sold is asked about.
                     var untradableApproved = await ApproveUntradable(plans.Where(p => p.Pick.Count > 0).Select(p => p.Item), args.Caller, ct).ConfigureAwait(false);
+                    // What is sold stays in the shop's or the retainer's buyback; its market value decides whether XIV MCP asks before
+                    // closing that shop or dismissing that retainer. One lookup for everything; untradable items have no market value.
+                    var place = await Game.Run(Buyback.SalePlace).ConfigureAwait(false);
+                    var tradable = plans.Where(p => p.Pick.Count > 0 && !p.Item.IsUntradable && p.Item.PriceLow > 0).Select(p => p.Item.RowId).Distinct().ToList();
+                    var values = await Buyback.MarketValues(tradable, config.AllowOnlineData, ct).ConfigureAwait(false);
+                    long? UnitValue(Lumina.Excel.Sheets.Item item, bool hq) =>
+                        !item.IsUntradable && values.TryGetValue(item.RowId, out var v) ? (hq ? v.Hq : v.Nq) : null;
+
                     var gilBefore = await Game.Run(Gil).ConfigureAwait(false);
                     var results = new List<object>();
                     foreach (var (item, stacks, pick) in plans)
@@ -128,6 +139,8 @@ internal static class VendorTools
                                     continue;
                                 }
                                 sold += stack.Quantity;
+                                if (place is not null)
+                                    Buyback.Ledger.Add(place, new BuybackSale(item.RowId, name, stack.Hq, stack.Quantity, UnitValue(item, stack.Hq)));
                             }
                             catch (ToolException e)
                             {

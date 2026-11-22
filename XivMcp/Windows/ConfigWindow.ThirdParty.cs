@@ -43,6 +43,7 @@ internal sealed partial class ConfigWindow
             "market" => () =>
             {
                 window.DrawGilLimit();
+                window.DrawBuybackLimit();
                 if (!(window.compat?.ItemVendorLocation ?? false)) DrawVendorPluginMissing();
             },
             _ => null,
