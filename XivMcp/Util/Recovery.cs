@@ -57,15 +57,18 @@ internal static class Recovery
 
     /// <summary>
     /// Runs recovery until the character is free, recovery is blocked (combat, a cutscene, loading), or it gives up. Never throws for
-    /// the game's state; the result says what was done and what is left.
+    /// the game's state; the result says what was done and what is left. A merchant's shop whose buyback holds what XIV MCP sold is
+    /// only closed after the player approved it in game (see <see cref="Buyback.ConfirmShopClose"/>); <paramref name="caller"/> (null:
+    /// the caller of the tool call running now) is who asks. Declined, recovery stops and leaves the shop open.
     /// </summary>
-    public static async Task<Result> Run(CancellationToken ct, TimeSpan? timeout = null)
+    public static async Task<Result> Run(CancellationToken ct, TimeSpan? timeout = null, Permissions.Caller? caller = null)
     {
         var actions = new List<string>();
         var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(20));
         var escapes = 0;
         string? lastWindow = null;
         var tries = 0;
+        var shopConfirmed = false;
         while (true)
         {
             ct.ThrowIfCancellationRequested();
@@ -81,6 +84,14 @@ internal static class Recovery
                     return new Result(false, actions, action.Reason, Blocked: true);
                 case RecoveryStep.GiveUp:
                     return new Result(false, actions, action.Reason);
+            }
+            // Leaving a menu, closing a window or pressing Escape while the shop is shown can end the shop and its buyback.
+            if (!shopConfirmed && windows.Contains("Shop") && action.Step is not (RecoveryStep.AdvanceTalk or RecoveryStep.AnswerNo))
+            {
+                try { await Buyback.ConfirmShopClose(caller, ct).ConfigureAwait(false); }
+                catch (Mcp.ToolException e) when (Buyback.Declined(e)) { return new Result(false, actions, e.Message); }
+                shopConfirmed = true;
+                deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(20)); // the question may have taken a while
             }
             if (DateTime.UtcNow > deadline)
                 return new Result(false, actions, $"Still not free after {(timeout ?? TimeSpan.FromSeconds(20)).TotalSeconds:0} seconds (last: {actions.LastOrDefault() ?? "nothing done"}).");
