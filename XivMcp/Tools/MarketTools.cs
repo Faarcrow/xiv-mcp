@@ -164,7 +164,7 @@ internal static class MarketTools
                 try
                 {
                     var retainer = await Game.RunLoggedIn(() => { RequireBell(); compat.AcquireBell(); return ResolveRetainer(name); }).ConfigureAwait(false);
-                    await RetainerUi.OpenMenu(retainer, ct).ConfigureAwait(false);
+                    await RetainerUi.OpenMenu(retainer, args.Caller, ct).ConfigureAwait(false);
                     await SelectAndWait(AddonSaleHistory, "RetainerHistory", ct).ConfigureAwait(false);
                     // The rows arrive from the server, sometimes after several seconds: read until some show up. A retainer
                     // that never sold anything keeps an empty list, so give up after a while.
@@ -176,7 +176,7 @@ internal static class MarketTools
                         rows = await Game.Run(ReadHistory).ConfigureAwait(false);
                     } while (rows.Count == 0 && DateTime.UtcNow < until);
                     await Game.Run(() => { CloseAddon("RetainerHistory"); return true; }).ConfigureAwait(false);
-                    await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
+                    await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false);
                     return new { retainer, sales = rows, count = rows.Count };
                 }
                 finally
@@ -230,7 +230,7 @@ internal static class MarketTools
                         return (Item: item.RowId, ItemName: item.Name.ExtractText(), Retainer: retainer);
                     }).ConfigureAwait(false);
 
-                    await RetainerUi.OpenMenu(plan.Retainer, ct).ConfigureAwait(false);
+                    await RetainerUi.OpenMenu(plan.Retainer, args.Caller, ct).ConfigureAwait(false);
                     steps.Add($"Opened {plan.Retainer}.");
                     // Where is the stack? Bags first, then this retainer's inventory (loaded once the retainer is open).
                     var stack = await Game.Run(() => FindStack(plan.Item, args.Node("hq") is null ? null : args.Bool("hq", false))).ConfigureAwait(false)
@@ -246,7 +246,7 @@ internal static class MarketTools
                     var outcome = await PriceAndConfirm(plan.Item, stack.Hq, quantity, args.Node("price") is null ? null : args.Int("price", 0, 1, 999_999_999),
                                                         currentPrice: null, args.Bool("allow_low_price", false), maxDropPercent: null, MinPrice(args), dryRun: false, config, steps, ct).ConfigureAwait(false);
                     await Game.Run(() => { CloseAddon("RetainerSellList"); return true; }).ConfigureAwait(false);
-                    await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
+                    await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false);
                     return new { retainer = plan.Retainer, item = plan.ItemName, quantity, outcome, steps };
                 }
                 finally
@@ -309,7 +309,7 @@ internal static class MarketTools
                     foreach (var retainer in targets.Retainers)
                     {
                         ct.ThrowIfCancellationRequested();
-                        await RetainerUi.OpenMenu(retainer, ct).ConfigureAwait(false);
+                        await RetainerUi.OpenMenu(retainer, args.Caller, ct).ConfigureAwait(false);
                         await SelectAndWait(AddonSellFromBags, "RetainerSellList", ct).ConfigureAwait(false);
                         await Task.Delay(500, ct).ConfigureAwait(false);
                         var listings = await Game.Run(ReadListings).ConfigureAwait(false);
@@ -329,7 +329,7 @@ internal static class MarketTools
                             await Task.Delay(400, ct).ConfigureAwait(false);
                         }
                         await Game.Run(() => { CloseAddon("RetainerSellList"); return true; }).ConfigureAwait(false);
-                        await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
+                        await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false);
                     }
                     return new { dryRun, rules = await Game.Run(() => Rules().Describe).ConfigureAwait(false), results };
                 }
@@ -388,7 +388,7 @@ internal static class MarketTools
                     return (Item: item.RowId, ItemName: item.Name.ExtractText(), Retainer: retainer);
                 }).ConfigureAwait(false);
 
-                await RetainerUi.OpenMenu(plan.Retainer, ct).ConfigureAwait(false);
+                await RetainerUi.OpenMenu(plan.Retainer, args.Caller, ct).ConfigureAwait(false);
                 await SelectAndWait(AddonSellFromBags, "RetainerSellList", ct).ConfigureAwait(false);
                 await Task.Delay(500, ct).ConfigureAwait(false);
                 var total = 0;
@@ -412,7 +412,7 @@ internal static class MarketTools
                     await Task.Delay(Random.Shared.Next(500, 800), ct).ConfigureAwait(false);
                 }
                 await Game.Run(() => { CloseAddon("RetainerSellList"); return true; }).ConfigureAwait(false);
-                await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
+                await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false);
                 return new { retainer = plan.Retainer, item = plan.ItemName, to = toRetainer ? "retainer" : "inventory", total, taken, skipped };
             }
             finally

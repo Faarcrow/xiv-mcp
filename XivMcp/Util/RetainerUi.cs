@@ -70,13 +70,16 @@ internal static class RetainerUi
         }
     }
 
-    /// <summary>Opens the inventory of the named retainer. The retainer list (summoning bell) or another retainer must be open.</summary>
-    public static Task Open(string name, CancellationToken ct) => Open(name, false, ct);
+    /// <summary>
+    /// Opens the inventory of the named retainer. The retainer list (summoning bell) or another retainer must be open. Another
+    /// retainer is dismissed first (see <see cref="Close"/>), so <paramref name="caller"/> is who the player is told asks for that.
+    /// </summary>
+    public static Task Open(string name, Permissions.Caller? caller, CancellationToken ct) => Open(name, false, caller, ct);
 
-    /// <summary>Selects the named retainer and stops at its menu (instead of opening the inventory).</summary>
-    public static Task OpenMenu(string name, CancellationToken ct) => Open(name, true, ct);
+    /// <summary>Selects the named retainer and stops at its menu (instead of opening the inventory), as <see cref="Open(string, Permissions.Caller?, CancellationToken)"/> does.</summary>
+    public static Task OpenMenu(string name, Permissions.Caller? caller, CancellationToken ct) => Open(name, true, caller, ct);
 
-    private static async Task Open(string name, bool menuOnly, CancellationToken ct)
+    private static async Task Open(string name, bool menuOnly, Permissions.Caller? caller, CancellationToken ct)
     {
         // Right after using the bell the list (and the retainer data) can still be on its way.
         var waitUntil = DateTime.UtcNow.AddSeconds(10);
@@ -85,7 +88,7 @@ internal static class RetainerUi
         var target = await Svc.Framework.RunOnFrameworkThread(() => ResolveSortedIndex(name)).ConfigureAwait(false);
         var current = await Svc.Framework.RunOnFrameworkThread(() => ActiveRetainerName).ConfigureAwait(false);
         if (current is not null && !current.Equals(target.Name, StringComparison.Ordinal))
-            await Close(ct).ConfigureAwait(false);
+            await Close(caller, ct).ConfigureAwait(false);
 
         var state = new StepState();
         var deadline = DateTime.UtcNow.AddSeconds(20);
@@ -101,9 +104,10 @@ internal static class RetainerUi
     /// <summary>
     /// Closes the current retainer and returns to the retainer list. No-op if no retainer is open. A retainer that sold items to
     /// a vendor for you can buy them back only until it is dismissed, and the game asks before dismissing it: the player is asked
-    /// in game first, and if they decline, the retainer stays open and this throws.
+    /// in game first, and if they decline, the retainer stays open and this throws. <paramref name="caller"/> (null: the assistant)
+    /// is who the player is told asks, and whose answers for the session count: a plugin's dismissal never rides on the assistant's.
     /// </summary>
-    public static async Task Close(CancellationToken ct, Permissions.Caller? caller = null)
+    public static async Task Close(Permissions.Caller? caller, CancellationToken ct)
     {
         var state = new StepState();
         var deadline = DateTime.UtcNow.AddSeconds(20);

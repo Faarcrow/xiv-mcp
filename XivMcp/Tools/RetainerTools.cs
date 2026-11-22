@@ -107,8 +107,8 @@ internal static class RetainerTools
                 try
                 {
                     await Game.RunLoggedIn(() => { InventoryActionTools.EnsureNotBusy(); compat.AcquireBell(); return true; }).ConfigureAwait(false);
-                    if (menuOnly) await RetainerUi.OpenMenu(name, ct).ConfigureAwait(false);
-                    else await RetainerUi.Open(name, ct).ConfigureAwait(false);
+                    if (menuOnly) await RetainerUi.OpenMenu(name, args.Caller, ct).ConfigureAwait(false);
+                    else await RetainerUi.Open(name, args.Caller, ct).ConfigureAwait(false);
                     await Task.Delay(1200, ct).ConfigureAwait(false); // give the tracker a poll to capture the inventory
                     return new { opened = await Svc.Framework.RunOnFrameworkThread(() => RetainerUi.ActiveRetainerName).ConfigureAwait(false) };
                 }
@@ -134,7 +134,7 @@ internal static class RetainerTools
                 try
                 {
                     var name = await Svc.Framework.RunOnFrameworkThread(() => RetainerUi.ActiveRetainerName).ConfigureAwait(false);
-                    await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
+                    await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false);
                     var closeList = args.Bool("close_list", false);
                     if (closeList) await RetainerUi.CloseList(ct).ConfigureAwait(false);
                     return new { closed = name, retainerListClosed = closeList };
@@ -199,11 +199,11 @@ internal static class RetainerTools
                     var results = new List<object>();
                     foreach (var t in transfers)
                     {
-                        var result = await RunTransfer(t, config, ct).ConfigureAwait(false);
+                        var result = await RunTransfer(t, config, args.Caller, ct).ConfigureAwait(false);
                         results.Add(result);
                         if (!result.Ok) break;
                     }
-                    if (closeWhenDone) await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
+                    if (closeWhenDone) await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false);
                     return new { completed = results.Cast<TransferResult>().Count(r => r.Ok), requested = transfers.Count, results };
                 }
                 finally { InventoryActionTools.Gate.Release(); }
@@ -281,17 +281,17 @@ internal static class RetainerTools
                         var started = DateTime.UtcNow;
                         try
                         {
-                            await RetainerUi.Open(name, ct).ConfigureAwait(false);
+                            await RetainerUi.Open(name, args.Caller, ct).ConfigureAwait(false);
                             var captured = await WaitFor(() => tracker.Get(Svc.PlayerState.ContentId)?.Retainers
                                 .FirstOrDefault(r => r.Name == name)?.InventoryCapturedUtc > started, TimeSpan.FromSeconds(6), ct).ConfigureAwait(false);
                             var snap = tracker.Get(Svc.PlayerState.ContentId)?.Retainers.FirstOrDefault(r => r.Name == name);
                             results.Add(new RefreshResult(name, captured, snap?.Items.Count, snap?.Market.Count, null));
-                            await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
+                            await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false);
                         }
                         catch (ToolException ex)
                         {
                             results.Add(new RefreshResult(name, false, null, null, ex.Message));
-                            try { await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false); } catch (ToolException) { /* report the original problem */ }
+                            try { await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false); } catch (ToolException) { /* report the original problem */ }
                             break;
                         }
                         await Task.Delay(config.NextMoveDelay(), ct).ConfigureAwait(false);
@@ -355,7 +355,7 @@ internal static class RetainerTools
 
     private sealed record TransferResult(int Index, bool Ok, string Item, string From, string To, int StacksMoved, int QuantityMoved, string? Error, List<InventoryActionTools.MoveResult> Moves);
 
-    private static async Task<TransferResult> RunTransfer(Transfer t, Configuration config, CancellationToken ct)
+    private static async Task<TransferResult> RunTransfer(Transfer t, Configuration config, Permissions.Caller? caller, CancellationToken ct)
     {
         var itemName = InventoryTools.ItemName(t.ItemId) ?? t.ItemId.ToString();
         var moves = new List<InventoryActionTools.MoveResult>();
@@ -377,7 +377,7 @@ internal static class RetainerTools
             }
             else
             {
-                await RetainerUi.Open(t.From, ct).ConfigureAwait(false);
+                await RetainerUi.Open(t.From, caller, ct).ConfigureAwait(false);
                 var stacks = await Svc.Framework.RunOnFrameworkThread(() => FindStacks(RetainerPages, t.ItemId, t.Hq, t.Stacks)).ConfigureAwait(false);
                 if (stacks.Count == 0) return Fail($"{t.From} has no {itemName}.");
                 var free = await Svc.Framework.RunOnFrameworkThread(() => CountEmpty(Bags)).ConfigureAwait(false);
@@ -399,7 +399,7 @@ internal static class RetainerTools
             }
 
             // 2) Entrust the stacks to the target retainer.
-            await RetainerUi.Open(t.To, ct).ConfigureAwait(false);
+            await RetainerUi.Open(t.To, caller, ct).ConfigureAwait(false);
             var entrusted = 0;
             var quantity = 0;
             foreach (var b in inBags)

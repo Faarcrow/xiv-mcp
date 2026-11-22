@@ -135,10 +135,10 @@ internal static class VentureTools
                                 Category: CategoryFor(task, retainer.ClassJob));
                     }).ConfigureAwait(false);
 
-                    await RetainerUi.OpenMenu(plan.Retainer, ct).ConfigureAwait(false);
+                    await RetainerUi.OpenMenu(plan.Retainer, args.Caller, ct).ConfigureAwait(false);
                     steps.Add($"Opened {plan.Retainer}.");
                     await Assign(plan.Task, plan.Category, plan.HasReport, plan.Previous, steps, ct).ConfigureAwait(false);
-                    await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
+                    await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false);
 
                     var after = await Game.Run(() => FindRetainer(plan.Retainer)).ConfigureAwait(false);
                     if (after.VentureId != plan.Task.RowId)
@@ -203,10 +203,10 @@ internal static class VentureTools
                 steps.Add("Approved in game.");
 
                 await Game.Run(() => { compat.AcquireBell(); return true; }).ConfigureAwait(false);
-                await RetainerUi.OpenMenu(target.Retainer.Name, ct).ConfigureAwait(false);
+                await RetainerUi.OpenMenu(target.Retainer.Name, args.Caller, ct).ConfigureAwait(false);
                 steps.Add($"Opened {target.Retainer.Name}.");
                 await Recall(steps, ct).ConfigureAwait(false);
-                await RetainerUi.Close(ct, args.Caller).ConfigureAwait(false);
+                await RetainerUi.Close(args.Caller, ct).ConfigureAwait(false);
 
                 var after = await Game.Run(() => FindRetainer(target.Retainer.Name)).ConfigureAwait(false);
                 if (after.Running) throw new ToolException($"{target.Retainer.Name} is still on the venture. Steps: {string.Join(" → ", steps)}");

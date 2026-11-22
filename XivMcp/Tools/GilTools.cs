@@ -74,9 +74,9 @@ internal static class GilTools
         name ??= active ?? throw new ToolException("No retainer is open. Name one with 'retainer' (at a summoning bell).");
         // The gil entry is in the retainer's menu: go back to it if its inventory is open, or open the retainer.
         if (active is not null && (!active.Equals(name, StringComparison.OrdinalIgnoreCase) || !await Game.Run(() => RetainerUi.Ready("SelectString")).ConfigureAwait(false)))
-            await RetainerUi.Close(ct, caller).ConfigureAwait(false);
+            await RetainerUi.Close(caller, ct).ConfigureAwait(false);
         if (!await Game.Run(() => RetainerUi.Ready("SelectString") && RetainerUi.ActiveRetainerName is not null).ConfigureAwait(false))
-            await RetainerUi.OpenMenu(name, ct).ConfigureAwait(false);
+            await RetainerUi.OpenMenu(name, caller, ct).ConfigureAwait(false);
         var retainer = await Game.Run(() => RetainerUi.ActiveRetainerName).ConfigureAwait(false) ?? name;
 
         var (player, stored) = await Game.Run(Balances(chest: false)).ConfigureAwait(false);
