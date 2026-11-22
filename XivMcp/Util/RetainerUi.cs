@@ -354,6 +354,7 @@ internal static class RetainerUi
             {
                 case int v: atk[i].Type = AtkValueType.Int; atk[i].Int = v; break;
                 case uint v: atk[i].Type = AtkValueType.UInt; atk[i].UInt = v; break;
+                case bool v: atk[i].Type = AtkValueType.Bool; atk[i].Byte = v ? (byte)1 : (byte)0; break;
                 case null: atk[i].Type = AtkValueType.Undefined; break;
                 default: throw new ArgumentException($"Unsupported callback value {values[i]}");
             }

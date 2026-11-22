@@ -53,6 +53,7 @@ public static class BuiltInCapabilities
         ["deploy_submersible"] = [GameUi, SpendCurrency],
         ["recall_submersible"] = [GameUi, SpendCurrency],
         ["dye_item"] = [GameUi, MoveItems, SpendCurrency],
+        ["desynthesize_items"] = [GameUi, DiscardItems],
         ["buy_item"] = [GameUi, MoveCharacter, SpendGil, SpendCurrency],
         ["buy_ceruleum_tanks"] = [GameUi, MoveCharacter, SpendCurrency],
         ["buy_with_company_credits"] = [GameUi, MoveCharacter, SpendCurrency],
