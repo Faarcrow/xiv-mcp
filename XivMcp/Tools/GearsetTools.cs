@@ -176,7 +176,7 @@ internal static class GearsetTools
         var row = Svc.Data.GetExcelSheet<Item>().GetRowOrDefault(id);
         var d = new Dictionary<string, object?>
         {
-            ["slot"] = InventoryTools.EquipSlots[p.Slot],
+            ["slot"] = Fashion.GearSlots.Name(p.Slot),
             ["itemId"] = id,
             ["name"] = row?.Name.ExtractText(),
         };
