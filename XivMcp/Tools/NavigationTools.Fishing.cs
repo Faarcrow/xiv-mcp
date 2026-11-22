@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
+using Dalamud.Game.ClientState.Conditions;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Lumina.Excel.Sheets;
 using XivMcp.Mcp;
@@ -77,7 +78,7 @@ internal static partial class NavigationTools
                     await Task.Delay(250, ct).ConfigureAwait(false);
                 }
                 await Game.Run(() => { StopMoving(); return true; }).ConfigureAwait(false);
-                await GetOffMount(steps, ct).ConfigureAwait(false);
+                await LandNear(target, steps, ct).ConfigureAwait(false);
             }
         }
 
@@ -94,6 +95,37 @@ internal static partial class NavigationTools
                 ? "Cast cannot be used here yet: step closer to the water and face it."
                 : "Switch to Fisher (switch_gearset) to fish here.",
         }).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Gets off the mount near a fishing spot. The path often ends in the air over the river or on a steep bank, where the game
+    /// refuses to land: move to the walkable ground nearest the character (then to the ground found for the spot) and try again.
+    /// </summary>
+    private static async Task LandNear(Vector3 ground, List<string> steps, CancellationToken ct)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try { await GetOffMount(steps, ct).ConfigureAwait(false); return; }
+            catch (ToolException) when (attempt < 3)
+            {
+                var landing = await Game.Run(() =>
+                {
+                    var here = Svc.Objects.LocalPlayer?.Position ?? ground;
+                    var near = attempt == 0
+                        ? Ipc<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPointReachable", here, 20f, 60f)
+                        : null;
+                    var to = near ?? ground;
+                    MoveCloseTo(to, 1f, Svc.Condition[ConditionFlag.InFlight]);
+                    return to;
+                }).ConfigureAwait(false);
+                steps.Add($"Could not land here; moving to the ground at {landing.X:0}/{landing.Z:0} and trying again.");
+                var until = DateTime.UtcNow.AddSeconds(8);
+                await Task.Delay(300, ct).ConfigureAwait(false);
+                while (await Game.Run(() => PathRunning).ConfigureAwait(false) && DateTime.UtcNow < until)
+                    await Task.Delay(200, ct).ConfigureAwait(false);
+                await Game.Run(() => { StopMoving(); return true; }).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>Near this spot (casting elsewhere fishes another spot), and as a Fisher, able to cast. Framework thread.</summary>
