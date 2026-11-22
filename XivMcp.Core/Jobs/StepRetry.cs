@@ -26,6 +26,7 @@ public static class StepRetry
         "No character is currently logged in",
         "Can't change gear right now",
         "The character is casting",
+        "character state: Casting",
         // A meld right after a crafting list: the crafting window is still closing.
         "Can't meld right now",
         "Artisan's solver hung",

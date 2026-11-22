@@ -16,6 +16,7 @@ public class StepRetryTests
     [InlineData("Can't meld right now (busy: crafting, gathering, talking or in a cutscene).")]
     [InlineData("Questionable stopped on its own while on True as Steel. Its window says why (a duty, a level, a step it cannot do).")]
     [InlineData("Equipped gearset 27 (Fisher), but the job did not change to FSH within 30 seconds.")]
+    [InlineData("Can't change the inventory right now (character state: Casting).")]
     public void Passing_game_states_are_retried(string error) => Assert.True(StepRetry.ShouldRetry(error, attempts: 1));
 
     [Theory]
