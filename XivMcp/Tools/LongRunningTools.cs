@@ -416,10 +416,17 @@ internal static class LongRunningTools
                 if (!progress.MadeProgressThisRun && !progress.Finished)
                     throw new ToolException($"Artisan stopped without crafting anything from '{plan.Name}' (stopped at {progress.Current!.Item}: missing materials, wrong job or gear?)." +
                                             (GearIngredients.Note(progress.Current.GearIngredients) is { } manual ? " " + manual : ""));
-                var restored = progress.Finished && !written.SequenceEqual(resume.Original) ? await RestoreList(plan.Id, resume.Original).ConfigureAwait(false) : null;
+                // Stopping early is a failure: the steps after it (quests, turn-ins) would run short of the crafts still missing.
+                if (!progress.Finished)
+                {
+                    var free = await Game.Run(Items.FreeBagSlots).ConfigureAwait(false);
+                    throw new ToolException($"Artisan stopped early on '{plan.Name}', at {progress.Current!.Item}: not every craft was made" +
+                                            (free == 0 ? " (the bags are full: free some slots first)." : " (missing materials, wrong job or gear?).") +
+                                            Continues(progress));
+                }
+                var restored = !written.SequenceEqual(resume.Original) ? await RestoreList(plan.Id, resume.Original).ConfigureAwait(false) : null;
                 return new { list = plan.Name, minutes = Math.Round((DateTime.UtcNow - started).TotalMinutes, 1), crafted = Report(plan.Entries, progress),
-                             resumed = resumeNote, restored,
-                             note = progress.Finished ? null : $"The list stopped early, at {progress.Current!.Item}: not every craft was made." + Continues(progress) };
+                             resumed = resumeNote, restored };
             },
         };
     }
