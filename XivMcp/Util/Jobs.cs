@@ -155,8 +155,19 @@ internal sealed class JobManager : IDisposable, ICache
     {
         lock (sync)
         {
-            if (runningJobId is not { } id || jobs.FirstOrDefault(j => j.Id == id)?.Current is not { } step || step.Tool != tool) return null;
-            return step.Memory?.DeepClone() as JsonObject;
+            if (runningJobId is not { } id || jobs.FirstOrDefault(j => j.Id == id) is not { } job || job.Current is not { } step || step.Tool != tool) return null;
+            if (step.Memory is { } own) return own.DeepClone() as JsonObject;
+            // A step added in place of one that failed or was skipped (update_job replace_remaining) continues where that one
+            // stopped: the most recent earlier unfinished step of the same tool lends its memory. A finished one doesn't, so
+            // running the same list again after it completed starts over. The tool checks the memory still fits (same list).
+            var index = job.Steps.IndexOf(step);
+            for (var i = index - 1; i >= 0; i--)
+            {
+                var earlier = job.Steps[i];
+                if (earlier.Tool != tool || earlier.Memory is null) continue;
+                return earlier.State == StepState.Done ? null : earlier.Memory.DeepClone() as JsonObject;
+            }
+            return null;
         }
     }
 
