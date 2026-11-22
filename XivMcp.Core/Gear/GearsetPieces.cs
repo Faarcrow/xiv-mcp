@@ -23,6 +23,12 @@ public static class GearsetPieces
     public static bool IsPiece(int slot, uint itemId) => itemId != 0 && slot != GearSlots.Waist;
 
     /// <summary>
+    /// Whether a piece counts as missing. The game sets its ItemMissing flag only after an equip attempt failed, so while the
+    /// containers are loaded what <see cref="Match"/> found (<paramref name="held"/>) decides; only without them does the flag.
+    /// </summary>
+    public static bool IsMissing(bool containersLoaded, Held? held, bool gameSaysMissing) => containersLoaded ? held is null : gameSaysMissing;
+
+    /// <summary>
     /// For each piece (slot, saved item id) the held item it would be equipped from, or null when it is missing. Each held item
     /// serves one piece only, so a ring worn on both hands needs two. The exact item (same quality) comes first, then the other
     /// quality of it; worn before armoury before bags. Empty and belt slots are left out.

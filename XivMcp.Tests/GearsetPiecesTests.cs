@@ -65,6 +65,24 @@ public class GearsetPiecesTests
         Assert.Equal(Place.Equipped, matched.Single().Held!.Place);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void With_the_containers_loaded_what_was_found_decides(bool gameFlag)
+    {
+        // The game's flag is stale until an equip attempt fails, so it is ignored whenever we could look ourselves.
+        Assert.True(IsMissing(containersLoaded: true, held: null, gameFlag));
+        Assert.False(IsMissing(containersLoaded: true, InArmoury(1), gameFlag));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Without_the_containers_the_games_missing_flag_decides(bool gameFlag)
+    {
+        Assert.Equal(gameFlag, IsMissing(containersLoaded: false, held: null, gameFlag));
+    }
+
     [Fact]
     public void Held_gear_sorted_once_serves_every_set_on_its_own()
     {

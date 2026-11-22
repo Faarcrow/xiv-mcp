@@ -51,7 +51,7 @@ internal static class Gearsets
                     if (item.Materia[m] != 0) materia.Add((item.Materia[m], item.MateriaGrades[m]));
                 var at = found?.GetValueOrDefault(s);
                 pieces.Add(new Piece(s, item.ItemId, item.GlamourId, [item.Stain0Id, item.Stain1Id], [.. materia], at,
-                    found is null ? item.Flags.HasFlag(RaptureGearsetModule.GearsetItemFlag.ItemMissing) : at is null));
+                    GearsetPieces.IsMissing(found is not null, at, item.Flags.HasFlag(RaptureGearsetModule.GearsetItemFlag.ItemMissing))));
             }
             sets.Add(new Set(i + 1, e->NameString, e->ClassJob, job?.Abbreviation.ExtractText() ?? "?", job?.Name.ExtractText() ?? "?", e->ItemLevel,
                 i == current, job is { } j && j.DohDolJobIndex < 0, pieces.Count(p => p.Missing), pieces));
