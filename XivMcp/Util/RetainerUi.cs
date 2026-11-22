@@ -118,7 +118,7 @@ internal static class RetainerUi
             if (await Svc.Framework.RunOnFrameworkThread(() => CloseStep(state)).ConfigureAwait(false)) return;
             if (state.BuybackHeldBy is { } retainer && !state.DiscardBuyback)
             {
-                var request = new Consent.Request($"Dismiss {retainer}?",
+                Consent.Request Request(bool offerSession) => new($"Dismiss {retainer}?",
                     [$"{retainer} still holds items sold to a vendor for you (\"Item buyback\" in the retainer's menu).",
                      "Once the retainer is dismissed, they can no longer be bought back."])
                 {
@@ -126,9 +126,10 @@ internal static class RetainerUi
                     Source = caller?.Name ?? "your AI assistant",
                     Warning = "Can't be undone.",
                     Risk = Permissions.RiskLevel.High,
-                    OfferSession = true,
+                    OfferSession = offerSession,
                 };
-                if (!await Consent.AskOrSession("retainer:discard_buyback", caller, request, BuybackConsentTimeout, ct).ConfigureAwait(false))
+                // Kept (and audited) as close_retainer's question, whichever tool dismisses the retainer.
+                if (!await Consent.AskDuringCall("close_retainer", ["dismiss_with_buyback"], caller, Request, BuybackConsentTimeout, ct).ConfigureAwait(false))
                 {
                     var declined = new ToolException($"{retainer} still holds items it sold for you, which can be bought back (\"Item buyback\" in its menu) " +
                                                      "only until it is dismissed, and the player did not approve dismissing it in game. The retainer stays open.");

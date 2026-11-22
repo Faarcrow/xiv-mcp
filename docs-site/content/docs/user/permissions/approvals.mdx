@@ -44,6 +44,8 @@ They open an approval window in the game, and nothing happens until you answer.
 
 A plugin can also ask in the middle of a call, with the real numbers, such as "Buy 3 Hi-Potions for 1,200 gil".
 
+XIV MCP itself asks in the middle of a call before selling untradable items or dismissing a retainer that can still buy back what it sold. Your assistant is offered *approve for this session*: for untradable items it covers just the items it asked about, and it lasts until XIV MCP restarts. When a plugin asks for these, the window asks every time and only offers *once*.
+
 One `buy_item` call asks once, for the whole quantity, even when it buys in several batches of 99. Buying the same item again in a new call asks again.
 
 ## Standing approvals

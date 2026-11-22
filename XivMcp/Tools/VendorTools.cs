@@ -146,23 +146,26 @@ internal static class VendorTools
 
     /// <summary>
     /// Asks the player in game once whether the untradable items of this call may be sold: once gone (and no longer in a buyback
-    /// list), they can't be bought from other players again. True when there are none to ask about.
+    /// list), they can't be bought from other players again. "For this session" (offered to the assistant only) covers just these
+    /// items. True when there are none to ask about.
     /// </summary>
     private static async Task<bool> ApproveUntradable(IEnumerable<Lumina.Excel.Sheets.Item> items, Permissions.Caller? caller, CancellationToken ct)
     {
-        var untradable = items.Where(i => i.IsUntradable && i.PriceLow > 0).Select(i => i.Name.ExtractText()).Distinct().ToList();
+        var untradable = items.Where(i => i.IsUntradable && i.PriceLow > 0).DistinctBy(i => i.RowId).ToList();
         if (untradable.Count == 0) return true;
-        var details = untradable.Select(n => $"{n} (untradable)").ToList();
+        var names = untradable.Select(i => i.Name.ExtractText()).ToList();
+        var details = names.Select(n => $"{n} (untradable)").ToList();
         details.Add("They can be bought back from the merchant's buyback tab, or the retainer's \"Item buyback\", until that closes.");
-        var request = new Consent.Request(untradable.Count == 1 ? $"Sell {untradable[0]}?" : $"Sell {untradable.Count} untradable items?", details)
+        Consent.Request Request(bool offerSession) => new(names.Count == 1 ? $"Sell {names[0]}?" : $"Sell {names.Count} untradable items?", details)
         {
             Deadline = DateTime.UtcNow + ConsentTimeout,
             Source = caller?.Name ?? "your AI assistant",
             Warning = "Untradable items can't be bought from other players again.",
             Risk = Permissions.RiskLevel.High,
-            OfferSession = true,
+            OfferSession = offerSession,
         };
-        return await Consent.AskOrSession("sell_to_vendor:untradable", caller, request, ConsentTimeout, ct).ConfigureAwait(false);
+        return await Consent.AskDuringCall("sell_to_vendor", untradable.Select(i => $"untradable:{i.RowId}").ToList(), caller, Request, ConsentTimeout, ct)
+                            .ConfigureAwait(false);
     }
 
     /// <summary>Sells one stack: its context menu, "Sell", the confirmation if the game asks; waits until it is gone from the bag.</summary>
