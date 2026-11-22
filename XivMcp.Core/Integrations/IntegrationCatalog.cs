@@ -33,6 +33,12 @@ public static class IntegrationCatalog
         /// offered while all of them are loaded, also when it is <see cref="Standalone"/>.
         /// </summary>
         public IReadOnlyDictionary<string, ToolRequirement[]> Requires { get; init; } = new Dictionary<string, ToolRequirement[]>();
+
+        /// <summary>
+        /// What the integration does where its plugin falls short (<see cref="Workaround"/>). The player can turn them off per plugin,
+        /// to have the plugin do everything its own way.
+        /// </summary>
+        public IReadOnlyList<Workaround> Workarounds { get; init; } = [];
     }
 
     private static ToolRequirement[] DeliveryHelpers =>
@@ -201,6 +207,7 @@ public static class IntegrationCatalog
                 ["do_quests"] = QuestTravel,
                 ["start_main_scenario"] = QuestTravel,
             },
+            Workarounds = QuestionableWorkarounds.All,
         },
     ];
 
@@ -218,6 +225,9 @@ public static class IntegrationCatalog
 
     /// <summary>The integration a tool belongs to, if any.</summary>
     public static Integration? For(string toolName) => All.FirstOrDefault(i => i.Tools.ContainsKey(toolName));
+
+    /// <summary>The integration that drives a plugin (by internal name), if any.</summary>
+    public static Integration? ForPlugin(string pluginId) => All.FirstOrDefault(i => i.PluginId.Equals(pluginId, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Moves the tools that belong to an integration to its provider; <paramref name="isLoaded"/> tells whether a plugin is loaded.</summary>
     public static IEnumerable<McpTool> Apply(IEnumerable<McpTool> tools, Func<string, bool> isLoaded)

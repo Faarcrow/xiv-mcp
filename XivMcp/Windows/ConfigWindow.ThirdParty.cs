@@ -34,20 +34,31 @@ internal sealed partial class ConfigWindow
         public void ToolsChanged() => window.plugin.Server.NotifyIfToolsChanged();
         public bool Press(string controlId) => window.Controls.Consume(controlId);
 
-        public Action? Options(string groupId) => groupId switch
+        public Action? Options(string groupId)
         {
-            "game_navigation" => window.DrawBellPreference,
-            "plugin_management" => window.DrawTurnOnNeededPlugins,
-            "items_retainers" => window.DrawMoveDelay,
-            "saucy" => window.DrawGoldSaucerOptions,
-            "market" => () =>
+            Action? own = groupId switch
             {
-                window.DrawGilLimit();
-                window.DrawBuybackLimit();
-                if (!(window.compat?.ItemVendorLocation ?? false)) DrawVendorPluginMissing();
-            },
-            _ => null,
-        };
+                "game_navigation" => window.DrawBellPreference,
+                "plugin_management" => window.DrawTurnOnNeededPlugins,
+                "items_retainers" => window.DrawMoveDelay,
+                "saucy" => window.DrawGoldSaucerOptions,
+                "market" => () =>
+                {
+                    window.DrawGilLimit();
+                    window.DrawBuybackLimit();
+                    if (!(window.compat?.ItemVendorLocation ?? false)) DrawVendorPluginMissing();
+                },
+                _ => null,
+            };
+            // Every integration that works around its plugin's gaps gets the switch for them.
+            if (PermissionCatalog.Find(groupId)?.PluginId is not { } pluginId || IntegrationCatalog.ForPlugin(pluginId) is not { Workarounds.Count: > 0 } integration)
+                return own;
+            return () =>
+            {
+                own?.Invoke();
+                window.DrawWorkarounds(integration);
+            };
+        }
     }
 
     private string ThirdPartyTabLabel() => ThirdParty.TabLabel();

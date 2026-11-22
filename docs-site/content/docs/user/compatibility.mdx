@@ -1,6 +1,6 @@
 ---
 title: Compatibility with other plugins
-description: Which plugins XIV MCP pauses while it works, and which it uses.
+description: Which plugins XIV MCP pauses while it works, which it uses, and where it works around them.
 icon: Puzzle
 ---
 
@@ -21,3 +21,11 @@ XIV MCP detects these plugins automatically. Its settings only mention the ones 
 None of them is required. XIV MCP's own tools work without them, asking you to do the part the plugin would have done: vnavmesh walks for you, Lifestream teleports you, Item Vendor Location finds vendors. Only the integration tools (dungeons with AutoDuty, crafting lists with Artisan, gathering with GatherBuddy Reborn, FC chest transfers with FCCH, the Gold Saucer with Saucy or TriadBuddy, fishing with AutoHook, quests with Questionable) need their plugin, and they disappear from your assistant's tool list while it is not loaded.
 
 Which tool uses which plugin, what happens without it, and where to get each one is on [Plugins XIV MCP uses](/docs/user/plugins).
+
+## Workarounds
+
+Some integrations do more than drive their plugin: where the plugin falls short, XIV MCP steps in. Questionable, for example, waits at a "meld materia" step even when the item already has materia, so XIV MCP presses its Skip for you. These workarounds are on by default.
+
+If you would rather have a plugin behave exactly as it does when you use it yourself, untick **Work around gaps in** that plugin in its module's options: `/xivmcp` → **Modules**, its card under **Integrations maintained by XIV MCP** (the options show while its changes are not denied). XIV MCP then still starts, watches and stops the plugin, and leaves everything else to it. A step the plugin can't get past ends the job with the plugin's reason.
+
+A job's result lists the workarounds it used and how often (`workaroundsUsed`), so you can see which ones a plugin still needs. Each plugin's workarounds, with what happens without them, are on [Plugins XIV MCP uses](/docs/user/plugins).

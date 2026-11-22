@@ -86,8 +86,19 @@ for (const m of integrationSource.matchAll(/new\("(\w+)", "([^"]+)", "([^"]+)", 
   const helpers = Object.fromEntries([...block('Helpers').matchAll(/\["(\w+)"\] = (\w+)/g)].map((h) => [h[1], h[2]]));
   // Standalone = new HashSet<string> { "tool", ... }: tools of the integration that need no plugin.
   const standalone = new Set([...(extras.match(/Standalone = new HashSet<string> \{([^}]*)\}/)?.[1] ?? '').matchAll(/"(\w+)"/g)].map((x) => x[1]));
-  integrations.push({ id: m[1], title: m[2], description: m[3], tools, alsoWith, helpers, standalone });
+  // Workarounds = QuestionableWorkarounds.All: a class in Workarounds.cs.
+  const workarounds = extras.match(/Workarounds = (\w+)\.All/)?.[1];
+  integrations.push({ id: m[1], title: m[2], description: m[3], tools, alsoWith, helpers, standalone, workarounds });
 }
+// Workarounds.cs: public static class QuestionableWorkarounds { ... new("id", "does", "instead") ... }
+const quoted = String.raw`"((?:[^"\\]|\\.)*)"`;
+const workaroundLists = Object.fromEntries([...read('XivMcp.Core/Integrations/Workarounds.cs').matchAll(/public static class (\w+)\s*\{([\s\S]*?)\n\}/g)].map((c) => [
+  c[1],
+  [...c[2].matchAll(new RegExp(String.raw`new\("(\w+)",\s*` + quoted + String.raw`,\s*` + quoted + String.raw`\)`, 'g'))]
+    .map((w) => ({ id: w[1], does: w[2].replace(/\\"/g, '"'), instead: w[3].replace(/\\"/g, '"') })),
+]));
+for (const i of integrations)
+  if (i.workarounds && !workaroundLists[i.workarounds]?.length) warnings.push(`${i.id}'s workarounds (${i.workarounds}) were not found in Workarounds.cs.`);
 // Helper lists named in Helpers: private static ToolRequirement[] Travel => [ new("vnavmesh", Need.Improves, "purpose", "without"), ... ];
 const helperLists = Object.fromEntries([...integrationSource.matchAll(/ToolRequirement\[\] (\w+) =>\s*\[([\s\S]*?)\];/g)].map((h) => [
   h[1],
@@ -273,6 +284,18 @@ for (const i of integrations) {
     }
   }
   req.push('');
+  const workarounds = workaroundLists[i.workarounds] ?? [];
+  if (workarounds.length) {
+    const name = plugin(i.id).name;
+    req.push(
+      `Where ${name} falls short, XIV MCP steps in. To have ${name} do everything its own way, untick **Work around gaps in ${name}** in its module's options. See [Workarounds](/docs/user/compatibility#workarounds).`,
+      '',
+      '| XIV MCP | With the workarounds off |',
+      '|---|---|',
+      ...workarounds.map((w) => `| ${text(w.does)} | ${text(w.instead)} |`),
+      '',
+    );
+  }
 }
 req.push(
   '## Where to get them',
