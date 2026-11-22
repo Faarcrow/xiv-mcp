@@ -153,6 +153,7 @@ public sealed class Plugin : IDalamudPlugin
         foreach (var e in AuditFile.ReadRecent(500)) audit.AddRestored(e);
         gate = new XivMcp.Permissions.ToolGate(policyStore, new ConsentApprovalGate(), probe, audit, notifier);
         Consent.Gate = gate; // questions during a call keep their session answers with the gate's, cleared with them
+        Buyback.Start(Config);
 
         jobs = new JobManager(registry, gate, () => roster.CurrentAccount);
         caches.Add(jobs);
@@ -220,6 +221,7 @@ public sealed class Plugin : IDalamudPlugin
         Approvals.AbandonWaiting(); // their questions close now unanswered, not declined by the player
         Consent.DeclineAll();
         Consent.Gate = null;
+        Buyback.Stop();
         configWindow.RememberForReload();
         windows.RemoveAllWindows();
         pluginApi.Dispose();

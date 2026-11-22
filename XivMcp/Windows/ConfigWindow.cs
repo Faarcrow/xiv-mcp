@@ -390,6 +390,30 @@ internal sealed partial class ConfigWindow : Window
         ImGui.TextColored(Muted, config.AskAboveGil == 0 ? "0: gil purchases never ask." : $"Gil purchases above {config.AskAboveGil:N0} gil ask first.");
     }
 
+    /// <summary>The market value of sold items above which XIV MCP asks before it closes the shop or dismisses the retainer holding their buyback.</summary>
+    private void DrawBuybackLimit()
+    {
+        var config = plugin.Config;
+        ImGui.Spacing();
+        IconText(FontAwesomeIcon.Undo, Muted);
+        ImGui.SameLine();
+        ImGui.TextUnformatted("Ask before losing buyback worth more than");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(Math.Min(140 * Ui.Scale, ImGui.GetContentRegionAvail().X));
+        var limit = config.AskBeforeLosingBuybackAboveGil;
+        if (ImGui.InputInt("gil##ask-buyback", ref limit, 1000, 10000))
+        {
+            config.AskBeforeLosingBuybackAboveGil = Math.Clamp(limit, 0, 999_999_999);
+            config.Save();
+        }
+        Tooltip("Items sold to a merchant can be bought back until the shop closes; items a retainer sold, until the retainer is dismissed. " +
+                "Before XIV MCP closes the shop or dismisses the retainer, it asks you when what it sold there is worth more than this on " +
+                "the market board, or when the value is unknown. Closing a shop yourself never asks.");
+        ImGui.TextColored(Muted, config.AskBeforeLosingBuybackAboveGil == 0
+            ? "0: never asks, buyback is given up without a question."
+            : $"Asks when sold items worth more than {config.AskBeforeLosingBuybackAboveGil:N0} gil (or of unknown value) would be lost.");
+    }
+
     /// <summary>Gold Saucer options: whether the Fashion Report and the Jumbo Cactpot use a Gold Saucer VIP Card first.</summary>
     private void DrawGoldSaucerOptions()
     {

@@ -63,6 +63,14 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Optional: gil purchases costing more than this in one buy_item call also ask in game first (0 = gil never asks).</summary>
     public int AskAboveGil { get; set; }
 
+    /// <summary>
+    /// Before XIV MCP closes a merchant's shop or dismisses a retainer while what it sold there can still be bought back, it asks in
+    /// game when their market value is above this (or unknown). 0 = never ask. Older settings files get the default.
+    /// </summary>
+    public int AskBeforeLosingBuybackAboveGil { get; set; } = DefaultBuybackLimit;
+
+    public const int DefaultBuybackLimit = 15_000;
+
     /// <summary>Use a Gold Saucer VIP Card right before presenting at the Fashion Report (it raises the MGP reward).</summary>
     public bool FashionReportVipCard { get; set; } = true;
 
