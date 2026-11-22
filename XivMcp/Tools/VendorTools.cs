@@ -209,7 +209,24 @@ internal static class VendorTools
         if (changed is not null) return changed;
         if (!await GameWindows.WaitFor(() => GameWindows.Ready("ContextMenu"), TimeSpan.FromSeconds(3), ct).ConfigureAwait(false))
             throw new ToolException($"The context menu of {name} did not open.");
-        await Game.Run(() => PickSell(name)).ConfigureAwait(false);
+        if (!await Game.Run(PickSell).ConfigureAwait(false))
+        {
+            // The inventory window on its "Key Items & Crystals" tab makes the menu leave out Sell: close it and open the menu
+            // without an owner window, as the game does when the inventory isn't shown.
+            await Game.Run(CloseInventoryWindows).ConfigureAwait(false);
+            await Task.Delay(300, ct).ConfigureAwait(false);
+            changed = await Game.Run(() =>
+            {
+                if (VendorSale.Changed(stack.Planned, ReadSlot(stack)) is { } why) return why;
+                OpenContextMenu(stack, withOwner: false);
+                return null;
+            }).ConfigureAwait(false);
+            if (changed is not null) return changed;
+            if (!await GameWindows.WaitFor(() => GameWindows.Ready("ContextMenu"), TimeSpan.FromSeconds(3), ct).ConfigureAwait(false))
+                throw new ToolException($"The context menu of {name} did not open.");
+            if (!await Game.Run(PickSell).ConfigureAwait(false))
+                throw new ToolException($"{name}'s context menu has no Sell entry: the shop or retainer window may have closed, or merchants do not buy it.");
+        }
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (DateTime.UtcNow < deadline)
         {
@@ -245,10 +262,20 @@ internal static class VendorTools
         return texts.Any(t => VendorSale.IsUntradableWarning(t, untradable)) ? "untradable" : "refused";
     }
 
-    private static unsafe void OpenContextMenu(Stack stack)
+    private static unsafe bool CloseInventoryWindows()
+    {
+        foreach (var name in InventoryAddons)
+        {
+            var a = GameWindows.Addon(name);
+            if (a != null && a->IsVisible) a->Close(true);
+        }
+        return true;
+    }
+
+    private static unsafe void OpenContextMenu(Stack stack, bool withOwner = true)
     {
         AtkUnitBase* owner = null;
-        foreach (var name in InventoryAddons)
+        foreach (var name in withOwner ? InventoryAddons : [])
         {
             var a = GameWindows.Addon(name);
             if (a != null && a->IsVisible) { owner = a; break; }
@@ -256,8 +283,8 @@ internal static class VendorTools
         AgentInventoryContext.Instance()->OpenForItemSlot(stack.Container, stack.Slot, 0, owner == null ? 0u : (uint)owner->Id);
     }
 
-    /// <summary>Picks the context menu's "Sell" entry by its text; closes the menu and refuses when there is none.</summary>
-    private static unsafe bool PickSell(string name)
+    /// <summary>Picks the context menu's "Sell" entry by its text; closes the menu and returns false when there is none.</summary>
+    private static unsafe bool PickSell()
     {
         var texts = GameWindows.Texts(SellTexts);
         var menu = GameWindows.Addon("ContextMenu");
@@ -273,7 +300,7 @@ internal static class VendorTools
             }
         }
         RetainerUi.Fire(menu, true, -1);
-        throw new ToolException($"{name}'s context menu has no Sell entry: the shop or retainer window may have closed, or merchants do not buy it.");
+        return false;
     }
 
     /// <summary>A merchant's shop, or a retainer's inventory (whose context menu offers "Have Retainer Sell Items"), is open.</summary>
