@@ -20,7 +20,10 @@ namespace XivMcp.Tools;
 /// </summary>
 internal static class VendorTools
 {
-    /// <summary>The context menu's "Sell" entry (Addon rows that read "Sell"), and "Have Retainer Sell Items" (5480).</summary>
+    /// <summary>
+    /// The context menu's "Sell" entry (Addon rows that read "Sell"), and "Have Retainer Sell Items" (5480), which the game only
+    /// shows while a retainer is open at a summoning bell.
+    /// </summary>
     private static readonly uint[] SellTexts = [93, 516, 530, 3886, 9520, 17655, 5480];
 
     /// <summary>"Sell … for … gil?": the confirmation the game shows for some items.</summary>
