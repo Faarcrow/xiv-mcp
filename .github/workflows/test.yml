@@ -1,0 +1,45 @@
+name: Test
+
+# Builds the plugin and runs the tests for every pull request (forks included) and every push to master. It only reads
+# the repository: no release, no tag, no repo.json; releasing is release.yml's job, on master only.
+on:
+  pull_request:
+    paths-ignore:
+      - docs-site/**
+      - '**.md'
+  push:
+    branches: [master]
+    paths-ignore:
+      - docs-site/**
+      - '**.md'
+      - repo.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download Dalamud
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile dalamud.zip
+          Expand-Archive -Force dalamud.zip -DestinationPath "$env:AppData\XIVLauncher\addon\Hooks\dev"
+
+      - name: Test
+        run: dotnet test XivMcp.Tests -c Release
+
+      - name: Build
+        run: dotnet build -c Release XivMcp/XivMcp.csproj
