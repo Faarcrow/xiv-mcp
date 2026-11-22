@@ -30,7 +30,7 @@ internal static class Gearsets
         if (module == null) return [];
         var jobs = Svc.Data.GetExcelSheet<ClassJob>();
         var current = module->CurrentGearsetIndex;
-        var held = HeldGear();
+        var held = HeldGear() is { } items ? new GearsetPieces.Holdings(items) : null;
         var sets = new List<Set>();
         for (var i = 0; i < 100; i++)
         {
@@ -40,7 +40,7 @@ internal static class Gearsets
             var saved = new List<(int Slot, uint ItemId)>();
             for (var s = 0; s < e->Items.Length; s++) saved.Add((s, e->Items[s].ItemId));
             // The game sets ItemMissing only after an equip attempt failed, so look for each piece ourselves (when the containers are loaded).
-            var found = held is null ? null : GearsetPieces.Match(saved, held).ToDictionary(m => m.Slot, m => m.Held);
+            var found = held is null ? null : held.Match(saved).ToDictionary(m => m.Slot, m => m.Held);
             var pieces = new List<Piece>();
             for (var s = 0; s < e->Items.Length; s++)
             {
@@ -89,12 +89,13 @@ internal static class Gearsets
                 >= FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory1 and <= FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory4 => GearsetPieces.Place.Bags,
                 _ => GearsetPieces.Place.Armoury,
             };
+            var container = type.ToString();
             for (var i = 0; i < c->Size; i++)
             {
                 var slot = c->GetInventorySlot(i);
                 if (slot->ItemId == 0) continue;
                 var hq = slot->Flags.HasFlag(FFXIVClientStructs.FFXIV.Client.Game.InventoryItem.ItemFlags.HighQuality);
-                held.Add(new GearsetPieces.Held(slot->ItemId + (hq ? GearsetPieces.HqOffset : 0), place, type.ToString(), i));
+                held.Add(new GearsetPieces.Held(slot->ItemId + (hq ? GearsetPieces.HqOffset : 0), place, container, i));
             }
         }
         return held;

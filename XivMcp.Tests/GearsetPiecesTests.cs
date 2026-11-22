@@ -64,4 +64,15 @@ public class GearsetPiecesTests
         var matched = Match([(Hands, 500u)], [new Held(500, Place.Bags, "Inventory1", 3), InArmoury(500), new Held(500, Place.Equipped, "EquippedItems", Hands)]);
         Assert.Equal(Place.Equipped, matched.Single().Held!.Place);
     }
+
+    [Fact]
+    public void Held_gear_sorted_once_serves_every_set_on_its_own()
+    {
+        // All() matches up to 100 sets against the same items; one set taking an item must not take it from the next.
+        var holdings = new Holdings([new Held(600, Place.Bags, "Inventory1", 3), new Held(600, Place.Equipped, "EquippedItems", Legs)]);
+        var first = holdings.Match([(Legs, 600u)]);
+        var second = holdings.Match([(Legs, 600u)]);
+        Assert.Equal(Place.Equipped, first.Single().Held!.Place);
+        Assert.Equal(Place.Equipped, second.Single().Held!.Place);
+    }
 }

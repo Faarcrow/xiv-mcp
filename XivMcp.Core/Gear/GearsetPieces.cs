@@ -27,20 +27,34 @@ public static class GearsetPieces
     /// serves one piece only, so a ring worn on both hands needs two. The exact item (same quality) comes first, then the other
     /// quality of it; worn before armoury before bags. Empty and belt slots are left out.
     /// </summary>
-    public static List<(int Slot, uint ItemId, Held? Held)> Match(IEnumerable<(int Slot, uint ItemId)> pieces, IEnumerable<Held> held)
+    public static List<(int Slot, uint ItemId, Held? Held)> Match(IEnumerable<(int Slot, uint ItemId)> pieces, IEnumerable<Held> held) =>
+        new Holdings(held).Match(pieces);
+
+    /// <summary>
+    /// The held items put in search order once, to match many sets against: listing the gearsets matches up to 100 of them on
+    /// every switch, and sorting the bags and armoury again for each set would be wasted. Each set is matched on its own.
+    /// </summary>
+    public sealed class Holdings(IEnumerable<Held> held)
     {
-        var result = pieces.Where(p => IsPiece(p.Slot, p.ItemId)).Select(p => (p.Slot, p.ItemId, Held: (Held?)null)).ToList();
-        var free = held.OrderBy(h => h.Place).ToList();
-        foreach (var exact in new[] { true, false })
-            for (var i = 0; i < result.Count; i++)
-            {
-                if (result[i].Held is not null) continue;
-                var wanted = result[i].ItemId;
-                var index = free.FindIndex(h => exact ? h.ItemId == wanted : h.ItemId % HqOffset == wanted % HqOffset);
-                if (index < 0) continue;
-                result[i] = result[i] with { Held = free[index] };
-                free.RemoveAt(index);
-            }
-        return result;
+        // OrderBy is stable, so items in the same place keep the order they were listed in (container, then slot).
+        private readonly Held[] ordered = held.OrderBy(h => h.Place).ToArray();
+
+        /// <summary>One set's pieces matched against the held items, as <see cref="GearsetPieces.Match"/> describes.</summary>
+        public List<(int Slot, uint ItemId, Held? Held)> Match(IEnumerable<(int Slot, uint ItemId)> pieces)
+        {
+            var result = pieces.Where(p => IsPiece(p.Slot, p.ItemId)).Select(p => (p.Slot, p.ItemId, Held: (Held?)null)).ToList();
+            var free = new List<Held>(ordered);
+            foreach (var exact in new[] { true, false })
+                for (var i = 0; i < result.Count; i++)
+                {
+                    if (result[i].Held is not null) continue;
+                    var wanted = result[i].ItemId;
+                    var index = free.FindIndex(h => exact ? h.ItemId == wanted : h.ItemId % HqOffset == wanted % HqOffset);
+                    if (index < 0) continue;
+                    result[i] = result[i] with { Held = free[index] };
+                    free.RemoveAt(index);
+                }
+            return result;
+        }
     }
 }
