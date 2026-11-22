@@ -330,6 +330,13 @@ internal static class QuestionableTools
                     // reports running: starting it again from its current step gets it going.
                     // A step for the player (a duty it cannot run, a solo duty, something by hand): Questionable waits for it.
                     // "Meld any materia on X": Questionable waits for a click on Skip even when X already carries materia.
+                    // Handing in an HQ turn-in asks "Do you really want to trade a high-quality item?", which nothing answers.
+                    if (await Game.Run(ConfirmHqTurnIn).ConfigureAwait(false))
+                    {
+                        Svc.Log.Information("[MCP] Confirmed handing in a high-quality item for the quest.");
+                        stall = new StallWatch(StallLimit);
+                        continue;
+                    }
                     if (await Game.Run(SkipDoneMeld).ConfigureAwait(false) is { } skipped)
                     {
                         Svc.Log.Information($"[MCP] {skipped}");
@@ -609,6 +616,20 @@ internal static class QuestionableTools
             CraftGatherTools.StopArtisan();
         var what = type == XivMcp.Quests.CraftStep.Craft ? "craft" : "purchase";
         return $"Questionable's {what} step for {count}x {Items.Name(id)} was skipped: the bags already hold {nq + hq}.";
+    }
+
+    /// <summary>
+    /// During a quest conversation, answers "Do you really want to trade a high-quality item?" with Yes: the quest asks for the
+    /// item (often HQ), and the prompt otherwise stays up until the turn-in times out. Framework thread.
+    /// </summary>
+    private static unsafe bool ConfirmHqTurnIn()
+    {
+        if (!Svc.Condition[ConditionFlag.OccupiedInQuestEvent] || !GameWindows.Ready("SelectYesno")) return false;
+        var yesno = GameWindows.Addon("SelectYesno");
+        var prompts = GameWindows.Texts(TradeTools.HighQualityPrompt);
+        if (!GameWindows.AllTexts(yesno).Any(t => prompts.Any(p => t.StartsWith(p, StringComparison.OrdinalIgnoreCase)))) return false;
+        RetainerUi.Fire(yesno, true, 0);
+        return true;
     }
 
     /// <summary>Whether a piece of gear of that name (bags, armoury, worn) has materia melded. Framework thread.</summary>

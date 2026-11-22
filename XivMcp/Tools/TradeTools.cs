@@ -26,7 +26,9 @@ internal static class TradeTools
 {
     /// <summary>Addon rows that read "Trade" (the context menu entry and the trade window's button), and "Complete trade?".</summary>
     private static readonly uint[] TradeTexts = [53, 95, 201, 203, 531, 3411, 8890, 10375, 11423, 13788];
-    private const uint CompleteTradePrompt = 102223, HighQualityPrompt = 102434;
+    private const uint CompleteTradePrompt = 102223;
+    /// <summary>"Do you really want to trade a high-quality item?" (also asked when handing an HQ item in for a quest).</summary>
+    internal const uint HighQualityPrompt = 102434;
 
     private const float TradeRange = 4f;
     private static readonly string[] InventoryAddons = ["InventoryExpansion", "InventoryLarge", "Inventory"];
