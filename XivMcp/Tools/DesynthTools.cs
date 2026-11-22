@@ -240,7 +240,7 @@ internal static class DesynthTools
     private static async Task DesynthOne(Stack stack, int expected, string name, CancellationToken ct)
     {
         await OpenDialog(stack, expected, name, bulk: false, ct).ConfigureAwait(false);
-        await Game.Run(() => PressDesynthesize(stack, expected, name)).ConfigureAwait(false);
+        await Game.Run(() => PressDesynthesize(stack, expected, name, bulk: false)).ConfigureAwait(false);
         if (!await GameWindows.WaitFor(() => SlotQuantity(stack) < expected || BulkRunOpen(), TimeSpan.FromSeconds(10), ct).ConfigureAwait(false))
             throw new ToolException($"{name} was not desynthesized (the game may have refused it, or the bags are full).");
         // The item leaves the stack before the desynthesis is over; its result window opens once it is. Until then the next
@@ -258,7 +258,7 @@ internal static class DesynthTools
     private static async Task DesynthStack(Stack stack, string name, CancellationToken ct)
     {
         await OpenDialog(stack, stack.Quantity, name, bulk: true, ct).ConfigureAwait(false);
-        await Game.Run(() => PressDesynthesize(stack, stack.Quantity, name)).ConfigureAwait(false);
+        await Game.Run(() => PressDesynthesize(stack, stack.Quantity, name, bulk: true)).ConfigureAwait(false);
 
         var left = stack.Quantity;
         var changed = DateTime.UtcNow;
@@ -320,14 +320,27 @@ internal static class DesynthTools
         if (!await GameWindows.WaitFor(() => GameWindows.Ready("SalvageDialog"), TimeSpan.FromSeconds(5), ct).ConfigureAwait(false))
             throw new ToolException($"The desynthesis window for {name} did not open.");
         await Task.Delay(Random.Shared.Next(250, 450), ct).ConfigureAwait(false);
-        // The game remembers the box from the last desynthesis, so it is set every time.
-        await Game.Run(() => SetBulk(bulk, expected, name)).ConfigureAwait(false);
+        // The game remembers the box from the last desynthesis, so it is set every time. The callback alone proves nothing: a box
+        // left ticked turns one item into the whole stack, more than the player approved. So the box itself is read back, and the
+        // callback sent again while it shows the wrong state; if it never takes, the window is closed before anything happens.
+        if (await Game.Run(() => SetBulk(bulk, expected, name)).ConfigureAwait(false))
+            for (var attempt = 1; ; attempt++)
+            {
+                if (await GameWindows.WaitFor(() => BulkTicked() == bulk, TimeSpan.FromSeconds(1), ct).ConfigureAwait(false)) break;
+                if (attempt == 3)
+                {
+                    await Game.Run(CloseDialog).ConfigureAwait(false);
+                    throw new ToolException($"The \"Desynthesize entire stack\" box for {name} could not be {(bulk ? "ticked" : "unticked")}; nothing was desynthesized.");
+                }
+                await Game.Run(() => SetBulk(bulk, expected, name)).ConfigureAwait(false);
+            }
         await Task.Delay(300, ct).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Ticks or unticks the window's "Desynthesize entire stack." box. The window has none for a single item (then only one can be
-    /// desynthesized anyway); for a bigger stack a missing box means the window isn't what XIV MCP knows. Framework thread.
+    /// Ticks or unticks the window's "Desynthesize entire stack." box; true when it sent that, false when the window has no box. It
+    /// has none for a single item (then only one can be desynthesized anyway); for a bigger stack a missing box means the window
+    /// isn't what XIV MCP knows. Framework thread.
     /// </summary>
     private static unsafe bool SetBulk(bool bulk, int stackSize, string name)
     {
@@ -343,7 +356,7 @@ internal static class DesynthTools
                 label.Contains(Dalamud.Memory.MemoryHelper.ReadSeStringNullTerminated((nint)v.String.Value).TextValue.Trim()))
                 box = k;
         }
-        if (box == -1 && stackSize == 1 && !bulk) return true;
+        if (box == -1 && stackSize == 1 && !bulk) return false;
         // The callback was recorded with the box second, after "Guarantee NQ item results."; another layout is left alone.
         if (box != BulkBoxPosition)
         {
@@ -355,10 +368,34 @@ internal static class DesynthTools
     }
 
     /// <summary>
-    /// Presses Desynthesize, unless the window closed, a whole-stack run is going on, or the stack no longer holds
-    /// <paramref name="expected"/>. Framework thread.
+    /// Whether the window's "Desynthesize entire stack." box is ticked, as the box itself shows it; null when the window is closed or
+    /// shows no such box. Framework thread.
     /// </summary>
-    private static unsafe bool PressDesynthesize(Stack stack, int expected, string name)
+    private static unsafe bool? BulkTicked()
+    {
+        var dialog = GameWindows.Addon("SalvageDialog");
+        if (dialog == null || !dialog->IsVisible) return null;
+        // The box is found by what it is and what it says, not by a node id: of the window's visible component nodes, the check box
+        // whose own text is "Desynthesize entire stack.". The other boxes ("Guarantee NQ item results." and the like) say something
+        // else, so they can't be mistaken for it.
+        var label = GameWindows.Texts(BulkLabel);
+        var uld = &dialog->UldManager;
+        for (var i = 0; i < uld->NodeListCount; i++)
+        {
+            var node = uld->NodeList[i];
+            if (node == null || (int)node->Type < 1000 || !node->IsVisible()) continue;
+            var component = ((AtkComponentNode*)node)->Component;
+            if (component == null || component->GetComponentType() != ComponentType.CheckBox) continue;
+            if (GameWindows.Label(component) is { } text && label.Contains(text)) return ((AtkComponentCheckBox*)component)->IsChecked;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Presses Desynthesize, unless the window closed, a whole-stack run is going on, the stack no longer holds
+    /// <paramref name="expected"/>, or the "Desynthesize entire stack." box isn't as <paramref name="bulk"/> wants it. Framework thread.
+    /// </summary>
+    private static unsafe bool PressDesynthesize(Stack stack, int expected, string name, bool bulk)
     {
         var dialog = GameWindows.Addon("SalvageDialog");
         if (dialog == null || !dialog->IsVisible || BulkRunOpen())
@@ -367,6 +404,13 @@ internal static class DesynthTools
         {
             CloseDialog();
             throw new ToolException($"{name} changed in the bags since you approved; nothing more was desynthesized.");
+        }
+        // Checked once more in the same frame as the press: the box must show what was asked for. Without a box only a single item
+        // may go (the window has none for it).
+        if (BulkTicked() is { } ticked ? ticked != bulk : bulk || expected > 1)
+        {
+            CloseDialog();
+            throw new ToolException($"The \"Desynthesize entire stack\" box for {name} isn't {(bulk ? "ticked" : "unticked")}; nothing more was desynthesized.");
         }
         RetainerUi.Fire(dialog, true, DesynthesizeButton, null);
         return true;

@@ -88,7 +88,7 @@ internal static class GameWindows
     }
 
     /// <summary>The first text inside a component (a button's label).</summary>
-    private static unsafe string? Label(AtkComponentBase* component)
+    public static unsafe string? Label(AtkComponentBase* component)
     {
         for (var j = 0; j < component->UldManager.NodeListCount; j++)
         {
