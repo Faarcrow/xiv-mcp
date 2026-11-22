@@ -78,6 +78,7 @@ public static class ToolSummaries
         ["complete_fashion_report"] = "Gets, dyes and puts on this week's easy Fashion Report set, then presents it for judging.",
         ["meld_materia"] = "Melds materia from your bags into a piece of your gear, overmelding included.",
         ["dye_item"] = "Dyes a piece of your gear in a color, using a dye from your bags.",
+        ["desynthesize_items"] = "Desynthesizes items from your bags, after you approve the list in the game.",
         ["capture_ui_events"] = "Records what game windows send while you click, for developing new tools.",
         ["take_screenshot"] = "Looks at your screen: takes a screenshot of the game or of the XIV MCP window.",
         ["run_autoretainer"] = "Opens a summoning bell and lets AutoRetainer handle your retainers.",

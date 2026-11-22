@@ -59,6 +59,21 @@ internal static class Gearsets
         return sets;
     }
 
+    /// <summary>Item ids (without the HQ offset) of the pieces saved in any gearset. Framework thread.</summary>
+    public static unsafe HashSet<uint> ItemIds()
+    {
+        var ids = new HashSet<uint>();
+        var module = RaptureGearsetModule.Instance();
+        if (module == null) return ids;
+        for (var i = 0; i < 100; i++)
+        {
+            if (!module->IsValidGearset(i)) continue;
+            foreach (ref var piece in module->GetGearset(i)->Items)
+                if (piece.ItemId != 0) ids.Add(piece.ItemId % 1_000_000);
+        }
+        return ids;
+    }
+
     private static readonly FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] GearContainers =
     [
         FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory1, FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory2,

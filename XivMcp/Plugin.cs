@@ -129,6 +129,7 @@ public sealed class Plugin : IDalamudPlugin
             .Concat(MapTools.Create(() => jobs!, () => Server?.LastClient))
             .Concat(DyeTools.Create())
             .Concat(MeldTools.Create())
+            .Concat(DesynthTools.Create())
             .Concat(MarketBoardTools.Create(Config))
             .Concat(FashionTools.Create(Config, retainers, () => jobs!, () => Server?.LastClient))
             .Concat(SaucyTools.Create(Config, () => jobs!, () => Server?.LastClient))
