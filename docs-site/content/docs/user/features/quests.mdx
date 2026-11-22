@@ -44,7 +44,7 @@ A quest counts as done only once the game itself says it is turned in: out of yo
 
 Some steps Questionable leaves to you: a duty it cannot run (or cannot have [AutoDuty](/docs/user/features/dungeons) run, for example below the duty's item level), a solo duty, or something to do by hand. Questionable says so in chat. The job then stops and tells you what Questionable said. Do that step, then start again: the quests you completed are left out.
 
-Two kinds of steps XIV MCP moves on from by itself, as if you pressed Questionable's Skip:
+XIV MCP moves on from these steps by itself, as if you pressed Questionable's Skip (they are [workarounds](#workarounds)):
 
 - **"Meld materia on …"** when that piece of gear (in your bags, armoury or worn) already carries materia.
 - **Buying an ingredient** at a shop when your bags already hold enough of it (Questionable can otherwise hang in the open shop).
@@ -52,7 +52,7 @@ Two kinds of steps XIV MCP moves on from by itself, as if you pressed Questionab
 
 When Questionable stops making progress, for example after a teleport took you to the wrong place, XIV MCP starts it again: when you stand in the same spot for two minutes without talking, fighting, gathering, crafting, a cutscene or a zone change. When Questionable stops because vnavmesh found no path (often while still flying), XIV MCP waits until you have landed and starts it again. Questionable also often stops by itself after a step it hands off, such as a craft, a cutscene or a dialogue choice, although the quest goes on. When it has stood still for 10 seconds after such a step, XIV MCP starts it again. After three restarts in a row the job stops.
 
-A quest can only be turned in on the job it was accepted on. A class quest's craft step can leave you on another crafter, so before Questionable goes on with an accepted quest, XIV MCP switches back to that job. When you hand in a high-quality item, the game asks "Do you really want to trade a high-quality item?"; during a quest conversation XIV MCP answers Yes.
+A quest can only be turned in on the job it was accepted on. A class quest's craft step can leave you on another crafter, so before Questionable goes on with an accepted quest, XIV MCP switches back to that job. When you hand in a high-quality item, the game asks "Do you really want to trade a high-quality item?"; during a quest conversation XIV MCP answers Yes. Both are workarounds too.
 
 ## Allied society quests
 
@@ -86,9 +86,15 @@ If you have not unlocked an allied society yet, it names the quest that unlocks 
 
 ## Jobs
 
-A quest remembers the job you accepted it on, and Questionable does not change jobs. So before a quest is accepted, XIV MCP switches to a gearset of a job that may do it: your current job when it may, else the highest level one. Gathering quests are always done as Miner or Botanist, never as Fisher, because Questionable gathers them on land. A gathering quest you already accepted as Fisher cannot be finished this way: abandon it, then start again. Your assistant can abandon it for you with `abandon_quest`, a tool of **Game & navigation**. Its progress is lost, and a daily quest's allowance is not given back.
+A quest remembers the job you accepted it on, and Questionable picks that job without looking at levels. So before a quest is accepted, XIV MCP switches to a gearset of a job that may do it: your current job when it may, else the highest level one. Gathering quests are always done as Miner or Botanist, never as Fisher, because Questionable gathers them on land. A gathering quest you already accepted as Fisher cannot be finished this way: abandon it, then start again. Your assistant can abandon it for you with `abandon_quest`, a tool of **Game & navigation**. Its progress is lost, and a daily quest's allowance is not given back.
 
 When the quests need different jobs, XIV MCP does the quests of one job, then switches, after any fight is over.
+
+## Workarounds
+
+Most of what this page describes is XIV MCP planning the quests and watching Questionable. Some of it is XIV MCP stepping in where Questionable falls short: picking the jobs, accepting several ready quests at once, the steps it skips, and the Yes to a high-quality turn-in.
+
+The job's result names the Questionable version it ran with and the workarounds it used, with how often (`workarounds`). Every workaround, with what Questionable does on its own and the Questionable version it was last checked against, is on [Plugins XIV MCP uses](/docs/user/plugins#questionable).
 
 ## Stopping
 

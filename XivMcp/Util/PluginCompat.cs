@@ -74,6 +74,10 @@ internal sealed class PluginCompat : IDisposable
     public static bool IsLoaded(string internalName) =>
         Svc.PluginInterface.InstalledPlugins.Any(p => p.InternalName.Equals(internalName, StringComparison.OrdinalIgnoreCase) && p.IsLoaded);
 
+    /// <summary>The loaded plugin's version ("15.756.3.64"), or null when it is not loaded.</summary>
+    public static string? Version(string internalName) =>
+        Svc.PluginInterface.InstalledPlugins.FirstOrDefault(p => p.InternalName.Equals(internalName, StringComparison.OrdinalIgnoreCase) && p.IsLoaded)?.Version.ToString();
+
     public bool AutoRetainerLoaded => IsLoaded(AutoRetainer);
 
     public const string FcchName = "FCCH";

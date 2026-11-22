@@ -10,6 +10,7 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using Lumina.Excel.Sheets;
+using XivMcp.Integrations;
 using XivMcp.Mcp;
 using XivMcp.Quests;
 using XivMcp.Util;
@@ -158,7 +159,9 @@ internal static class QuestionableTools
                           "'tribe', the day's quests of an allied society (rank-up quests included). A quest counts as completed only when " +
                           "the game's quest state shows it turned in (out of the journal, completed) on two checks in a row. Looks again after each quest. Gives " +
                           "Questionable the quests as its priority list (its own list is put back afterwards) and stops it when done, after a " +
-                          "fight. Starts Questionable again when the character stands still for 2 minutes (at most 3 times). Fails when Questionable stops on its own, waits for the player (a duty, a solo duty, a step by hand) or turns to another quest. Meant as a job step; complete_quest and " +
+                          "fight. Starts Questionable again when the character stands still for 2 minutes (at most 3 times). Fails when Questionable stops on its own, waits for the player (a duty, a solo duty, a step by hand) or turns to another quest. " +
+                          "Where Questionable falls short (the job to accept a quest on, a step already done, a prompt it leaves open) it steps in; " +
+                          "the result's 'workarounds' names Questionable's version and the workarounds used. Meant as a job step; complete_quest and " +
                           "do_tribe_dailies start it.",
             InputSchema = """
                 {
@@ -189,7 +192,7 @@ internal static class QuestionableTools
                 }
                 var tribe = await Game.RunLoggedIn(() => { RequireLoaded(); return FindTribe(tribeQuery!); }).ConfigureAwait(false);
                 var result = await Run(() => PlanTribe(tribe.Id), timeout, ct).ConfigureAwait(false);
-                return new { result.done, reputation = await Game.Run(() => TribeRank(tribe.Id)).ConfigureAwait(false) };
+                return new { result.done, reputation = await Game.Run(() => TribeRank(tribe.Id)).ConfigureAwait(false), result.workarounds };
             },
         };
 
@@ -240,26 +243,28 @@ internal static class QuestionableTools
 
     // ------------------------------------------------------------------ Running
 
-    private sealed record RunResult(bool done, List<string> completed);
+    private sealed record RunResult(bool done, List<string> completed, WorkaroundReport workarounds);
 
     /// <summary>
     /// Gives Questionable the planned quests and watches it, planning again whenever one of them is done, until nothing is left.
-    /// Its priority list is put back and it is stopped (after a fight) at the end, however the run ends.
+    /// Its priority list is put back and it is stopped (after a fight) at the end, however the run ends. Where Questionable falls
+    /// short it steps in, and counts each <see cref="QuestionableWorkarounds"/> it used.
     /// </summary>
     private static async Task<RunResult> Run(Func<IReadOnlyList<QuestInfo>> plan, TimeSpan timeout, CancellationToken ct)
     {
         var until = DateTime.UtcNow + timeout;
         var backup = await Game.Run(() => Ipc<string>("ExportQuestPriority")).ConfigureAwait(false);
         var completed = new List<string>();
+        var workarounds = new WorkaroundLog(PluginId, await Game.Run(() => PluginCompat.Version(PluginId)).ConfigureAwait(false));
         using var chat = new QuestionableChat();
         try
         {
             while (true)
             {
                 var quests = await Game.Run(plan).ConfigureAwait(false);
-                if (quests.Count == 0) return new RunResult(true, completed);
+                if (quests.Count == 0) return new RunResult(true, completed, workarounds.Report());
 
-                var (first, job) = await Game.Run(() =>
+                var (first, job, accepted) = await Game.Run(() =>
                 {
                     RefuseWrongJob(quests);
                     var noPath = Unsupported(quests).Select(q => q.Id).ToHashSet();
@@ -270,22 +275,27 @@ internal static class QuestionableTools
                         var (_, reason) = Ipc<string, (bool, string)>("IsQuestLockedReason", next.QuestionableId);
                         throw new ToolException($"{next.Name} cannot be accepted yet" + (reason.Length > 0 ? $" ({reason})." : ".") + LevelWarning([next]));
                     }
-                    // Quests remember the job they were accepted on, and Questionable does not switch jobs: accept on one that can do it.
+                    // Quests remember the job they were accepted on, and Questionable picks it without looking at levels (see
+                    // QuestionableWorkarounds.PickJob): accept on one that can do it.
                     var job = IsAccepted(next) ? QuestJobs.ForAccepted(AcceptedJob(next) ?? 0, Gearsets.CurrentJob(), GearsetJobs()) : JobFor(next)
                               ?? throw new ToolException($"No gearset is saved for a job that can do {next.Name} ({JobNames(next.Jobs)}).");
-                    return (next, job);
+                    return (next, job, IsAccepted(next));
                 }).ConfigureAwait(false);
 
                 if (job != await Game.Run(Gearsets.CurrentJob).ConfigureAwait(false))
                 {
                     await StopAfterFight(ct).ConfigureAwait(false);
                     await Gearsets.Switch(await Game.Run(() => JobAbbreviation(job)).ConfigureAwait(false), ct).ConfigureAwait(false);
+                    workarounds.Used(accepted ? QuestionableWorkarounds.BackToAcceptedJob : QuestionableWorkarounds.PickJob);
                 }
 
                 // A window that holds the character (the retainer list AutoRetainer's retainer sense opens at a bell, a shop) keeps
                 // Questionable from teleporting: it then waits forever. Close it first.
                 if (await Game.Run(() => Recovery.Occupied).ConfigureAwait(false))
+                {
                     await Recovery.Run(ct).ConfigureAwait(false);
+                    workarounds.Used(QuestionableWorkarounds.CloseBlockingWindow);
+                }
 
                 // Only the quests this job can do: the others come in a later round, after switching.
                 var (batch, accepting) = await Game.Run(() =>
@@ -303,6 +313,7 @@ internal static class QuestionableTools
                         throw new ToolException($"Questionable did not start {start.Name}.");
                     return (mine, flagged);
                 }).ConfigureAwait(false);
+                if (accepting.Count > 0) workarounds.Used(QuestionableWorkarounds.AcceptTogether);
 
                 var ids = batch.Select(q => q.QuestionableId).ToHashSet();
                 DateTime? elsewhereSince = null;
@@ -330,16 +341,18 @@ internal static class QuestionableTools
                     // reports running: starting it again from its current step gets it going.
                     // A step for the player (a duty it cannot run, a solo duty, something by hand): Questionable waits for it.
                     // "Meld any materia on X": Questionable waits for a click on Skip even when X already carries materia.
-                    // Handing in an HQ turn-in asks "Do you really want to trade a high-quality item?", which nothing answers.
+                    // Handing in an HQ turn-in asks "Do you really want to trade a high-quality item?", which Questionable at times leaves open.
                     if (await Game.Run(ConfirmHqTurnIn).ConfigureAwait(false))
                     {
                         Svc.Log.Information("[MCP] Confirmed handing in a high-quality item for the quest.");
+                        workarounds.Used(QuestionableWorkarounds.ConfirmHqTurnIn);
                         stall = new StallWatch(StallLimit);
                         continue;
                     }
                     if (await Game.Run(SkipDoneMeld).ConfigureAwait(false) is { } skipped)
                     {
-                        Svc.Log.Information($"[MCP] {skipped}");
+                        Svc.Log.Information($"[MCP] {skipped.Message}");
+                        workarounds.Used(skipped.Workaround);
                         stall = new StallWatch(StallLimit);
                         continue;
                     }
@@ -354,7 +367,7 @@ internal static class QuestionableTools
                         Svc.Log.Information($"[MCP] Questionable made no progress for {StallLimit.TotalMinutes:0} minutes; restarting it on quest {again} ({restarts}/{MaxRestarts}).");
                         await StopAfterFight(ct).ConfigureAwait(false);
                         await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
-                        await BackToAcceptedJob(batch.FirstOrDefault(q => q.QuestionableId == again) ?? first, ct).ConfigureAwait(false);
+                        await BackToAcceptedJob(batch.FirstOrDefault(q => q.QuestionableId == again) ?? first, workarounds, ct).ConfigureAwait(false);
                         await Game.Run(() => Ipc<string, bool>("StartQuest", again)).ConfigureAwait(false);
                         continue;
                     }
@@ -378,7 +391,7 @@ internal static class QuestionableTools
                     {
                         var again = s.Current is { Length: > 0 } cur && ids.Contains(cur) ? cur : first.QuestionableId;
                         Svc.Log.Information($"[MCP] Questionable stopped by itself; starting it again on quest {again}.");
-                        await BackToAcceptedJob(batch.FirstOrDefault(q => q.QuestionableId == again) ?? first, ct).ConfigureAwait(false);
+                        await BackToAcceptedJob(batch.FirstOrDefault(q => q.QuestionableId == again) ?? first, workarounds, ct).ConfigureAwait(false);
                         await Game.Run(() => Ipc<string, bool>("StartQuest", again)).ConfigureAwait(false);
                         stall = new StallWatch(StallLimit);
                         continue;
@@ -552,10 +565,10 @@ internal static class QuestionableTools
 
     /// <summary>
     /// When Questionable waits at a manual "meld materia on X" step and an X in the bags, armoury or worn gear already carries
-    /// materia, presses its Skip (QuestController.Skip(questId, sequence), what its window's Skip button calls) once. Returns what
-    /// it did, or null. Framework thread.
+    /// materia, presses its Skip (QuestController.Skip(questId, sequence), what its window's Skip button calls) once. Returns the
+    /// workaround and what it did, or null. Framework thread.
     /// </summary>
-    private static string? SkipDoneMeld()
+    private static (Workaround Workaround, string Message)? SkipDoneMeld()
     {
         try
         {
@@ -575,13 +588,13 @@ internal static class QuestionableTools
             var questId = quest.GetType().GetProperty("Id", Any)?.GetValue(quest);
             var key = $"{questId}/{sequence}/{stepIndex}";
             if (key == lastSkippedStep || questId is null) return null;
-            string done;
+            (Workaround, string) done;
             if (XivMcp.Quests.ManualStep.MeldItem(type, comment) is { } itemName)
             {
                 if (!HasMelded(itemName)) return null;
-                done = $"Questionable waited for \"{comment}\"; {itemName} already carries materia, so its step was skipped.";
+                done = (QuestionableWorkarounds.SkipMeldedStep, $"Questionable waited for \"{comment}\"; {itemName} already carries materia, so its step was skipped.");
             }
-            else if (CraftStepDone(step, type) is { } crafted) done = crafted;
+            else if (CraftStepDone(step, type) is { } crafted) done = (QuestionableWorkarounds.SkipOwnedItemsStep, crafted);
             else return null;
             var skip = controller.GetType().GetMethods(Any).FirstOrDefault(m => m.Name == "Skip" && m.GetParameters().Length == 2);
             if (skip is null) return null;
@@ -713,7 +726,7 @@ internal static class QuestionableTools
     /// Switches back to the job an accepted quest was accepted on when the character is on another one (a craft step's Artisan
     /// list switches crafters), before Questionable is started again: only that job can turn the quest in.
     /// </summary>
-    private static async Task BackToAcceptedJob(QuestInfo quest, CancellationToken ct)
+    private static async Task BackToAcceptedJob(QuestInfo quest, WorkaroundLog workarounds, CancellationToken ct)
     {
         var (job, current) = await Game.Run(() => (Job: IsAccepted(quest) ? QuestJobs.ForAccepted(AcceptedJob(quest) ?? 0, Gearsets.CurrentJob(), GearsetJobs()) : Gearsets.CurrentJob(),
                                                    Current: Gearsets.CurrentJob())).ConfigureAwait(false);
@@ -721,6 +734,7 @@ internal static class QuestionableTools
         Svc.Log.Information($"[MCP] {quest.Name} was accepted as {await Game.Run(() => JobAbbreviation(job)).ConfigureAwait(false)}; switching back before Questionable goes on.");
         await StopAfterFight(ct).ConfigureAwait(false);
         await Gearsets.Switch(await Game.Run(() => JobAbbreviation(job)).ConfigureAwait(false), ct).ConfigureAwait(false);
+        workarounds.Used(QuestionableWorkarounds.BackToAcceptedJob);
     }
 
     /// <summary>The job a quest was accepted on, or null when it is not accepted.</summary>

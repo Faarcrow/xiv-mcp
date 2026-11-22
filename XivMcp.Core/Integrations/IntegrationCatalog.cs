@@ -33,6 +33,12 @@ public static class IntegrationCatalog
         /// offered while all of them are loaded, also when it is <see cref="Standalone"/>.
         /// </summary>
         public IReadOnlyDictionary<string, ToolRequirement[]> Requires { get; init; } = new Dictionary<string, ToolRequirement[]>();
+
+        /// <summary>
+        /// What the integration does where its plugin falls short (<see cref="Workaround"/>): declared so they are visible in the docs
+        /// and in the results of the jobs that use them, and can go once the plugin fixes the gap.
+        /// </summary>
+        public IReadOnlyList<Workaround> Workarounds { get; init; } = [];
     }
 
     private static ToolRequirement[] DeliveryHelpers =>
@@ -201,6 +207,7 @@ public static class IntegrationCatalog
                 ["do_quests"] = QuestTravel,
                 ["start_main_scenario"] = QuestTravel,
             },
+            Workarounds = QuestionableWorkarounds.All,
         },
     ];
 
