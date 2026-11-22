@@ -75,5 +75,8 @@ public static class ShoreFinder
         return (edgeX + dx / length * inland, edgeZ + dz / length * inland);
     }
 
+    /// <summary>The game rotation (radians, 0 = facing +Z, pi/2 = facing +X) that turns a character at x/z towards the target.</summary>
+    public static double Facing(double x, double z, double targetX, double targetZ) => Math.Atan2(targetX - x, targetZ - z);
+
     private static double Normalize(double a) => (a % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
 }

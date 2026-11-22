@@ -273,6 +273,12 @@ internal static class AutoHookTools
                 await Task.Delay(wait, ct).ConfigureAwait(false);
             }
 
+            // Face the water: the character may stand at the edge turned the way it walked (cloud-sea and pier edges).
+            if (!await Game.Run(NavigationTools.CanCast).ConfigureAwait(false))
+            {
+                await Game.Run(() => { NavigationTools.FaceFishingSpot(guide.Spot); return true; }).ConfigureAwait(false);
+                await Task.Delay(400, ct).ConfigureAwait(false);
+            }
             await Game.Run(() => { SetAutoHook(true); return true; }).ConfigureAwait(false);
             log.Add("AutoHook on.");
             while (true)

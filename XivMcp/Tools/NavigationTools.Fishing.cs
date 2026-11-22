@@ -147,7 +147,7 @@ internal static partial class NavigationTools
                 await Game.Run(() => { StopMoving(); return true; }).ConfigureAwait(false);
             }
             await Task.Delay(400, ct).ConfigureAwait(false);
-            if (await Game.Run(() => AtSpot(place)).ConfigureAwait(false))
+            if (await FaceAndCheck(place, ct).ConfigureAwait(false))
             {
                 steps.Add($"vnavmesh: walked to the edge at {place.Name}, facing the spot.");
                 return true;
@@ -158,6 +158,33 @@ internal static partial class NavigationTools
 
     private static float PlayerHeight() => Svc.Objects.LocalPlayer?.Position.Y ?? 0;
 
+    /// <summary>
+    /// Turns the character toward the spot's centre. Walking up to an edge leaves the character facing the way it walked, which
+    /// at a cloud-sea or pier edge reached sideways (the path bends along a railing) is not the water, so Cast stays unusable.
+    /// Framework thread.
+    /// </summary>
+    private static unsafe void FaceSpot(FishingPlace place)
+    {
+        if (Svc.Objects.LocalPlayer is not { } p) return;
+        var angle = XivMcp.Fishing.ShoreFinder.Facing(p.Position.X, p.Position.Z, place.Centre.X, place.Centre.Z);
+        ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)p.Address)->SetRotation((float)angle);
+    }
+
+    /// <summary>Turns toward the fishing spot (by id) when the character stands in its zone. Framework thread.</summary>
+    internal static void FaceFishingSpot(uint spot)
+    {
+        if (FindFishingSpot(spot) is { } place && Svc.ClientState.TerritoryType == place.Territory) FaceSpot(place);
+    }
+
+    /// <summary>Turns toward the spot and tells whether Cast can be used here now. Framework calls inside.</summary>
+    private static async Task<bool> FaceAndCheck(FishingPlace place, CancellationToken ct)
+    {
+        if (await Game.Run(() => AtSpot(place)).ConfigureAwait(false)) return true;
+        await Game.Run(() => { FaceSpot(place); return true; }).ConfigureAwait(false);
+        await Task.Delay(400, ct).ConfigureAwait(false);
+        return await Game.Run(() => AtSpot(place)).ConfigureAwait(false);
+    }
+
     /// <summary>How far from a spot's centre to look for its shore, in yalms.</summary>
     private const float ShoreSearch = 40;
 
@@ -167,6 +194,12 @@ internal static partial class NavigationTools
     /// </summary>
     private static async Task WalkToShore(FishingPlace place, List<string> steps, CancellationToken ct)
     {
+        // Already standing at the water (the travel ended at the edge), just facing elsewhere.
+        if (await FaceAndCheck(place, ct).ConfigureAwait(false))
+        {
+            steps.Add($"Turned to face the water at {place.Name}.");
+            return;
+        }
         if (await WalkToEdge(place, steps, ct).ConfigureAwait(false)) return;
         var candidates = await Game.Run(() =>
         {
@@ -193,7 +226,7 @@ internal static partial class NavigationTools
                 await Game.Run(() => { StopMoving(); return true; }).ConfigureAwait(false);
             }
             await Task.Delay(400, ct).ConfigureAwait(false);
-            if (await Game.Run(() => AtSpot(place)).ConfigureAwait(false))
+            if (await FaceAndCheck(place, ct).ConfigureAwait(false))
             {
                 steps.Add($"vnavmesh: walked to the water's edge at {place.Name}.");
                 return;
@@ -220,7 +253,7 @@ internal static partial class NavigationTools
             }
             await Game.Run(() => { StopMoving(); return true; }).ConfigureAwait(false);
             await Task.Delay(400, ct).ConfigureAwait(false);
-            if (cast || await Game.Run(() => AtSpot(place)).ConfigureAwait(false))
+            if (cast || await FaceAndCheck(place, ct).ConfigureAwait(false))
             {
                 steps.Add($"vnavmesh: walked out to the water at {place.Name}.");
                 return;

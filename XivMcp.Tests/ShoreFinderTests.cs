@@ -75,4 +75,13 @@ public class ShoreFinderTests
 
     [Fact]
     public void The_approach_at_the_centre_itself_stays_put() => Assert.Equal((5.0, 5.0), ShoreFinder.ApproachFrom(5, 5, 5, 5));
+
+    // The game's rotation: 0 faces +Z (south), pi/2 faces +X (east).
+    [Theory]
+    [InlineData(0, 10, 0)]
+    [InlineData(10, 0, Math.PI / 2)]
+    [InlineData(-10, 0, -Math.PI / 2)]
+    [InlineData(0, -10, Math.PI)]
+    public void Facing_points_the_character_at_the_spot(double dx, double dz, double expected) =>
+        Assert.Equal(expected, ShoreFinder.Facing(100, 200, 100 + dx, 200 + dz), 6);
 }
