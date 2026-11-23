@@ -66,6 +66,21 @@ public class CraftListResumeTests
     }
 
     [Fact]
+    public void A_craft_item_step_run_again_asks_only_for_the_crafts_still_missing()
+    {
+        // craft_item has no Artisan list: its memory holds the one recipe and the amount asked for.
+        List<RecipeCount> asked = [new(100, 3)];
+        var memory = new CraftListMemory(CraftListMemory.NoList, asked, asked, new() { [100] = 2 });
+        var plan = CraftListResume.Plan(memory, CraftListMemory.NoList, asked);
+        Assert.Equal([new RecipeCount(100, 1)], plan.Shrink);
+        Assert.Equal(asked, plan.Original);
+        Assert.Equal(2, plan.Done[100]);
+        // Another item or another amount starts over.
+        Assert.Empty(CraftListResume.Plan(memory, CraftListMemory.NoList, [new(100, 5)]).Done);
+        Assert.Empty(CraftListResume.Plan(memory, CraftListMemory.NoList, [new(101, 3)]).Done);
+    }
+
+    [Fact]
     public void Memory_is_read_back_as_the_job_step_keeps_it()
     {
         // The job keeps the step's memory as the JsonObject the step wrote (deep-cloned), not as parsed text: a retry in the same

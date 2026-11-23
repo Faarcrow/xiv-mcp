@@ -410,8 +410,13 @@ internal static class LongRunningTools
     /// ("unable to change classes or jobs at this time"), and Artisan then pauses its list for good, so this waits (up to 90 s) for
     /// the combat flag to clear.
     /// </summary>
-    internal static async Task ReadyToCraft(CancellationToken ct)
+    /// <param name="waitForFight">False for a direct call, which has to answer within the AI app's minute: during a fight it is
+    /// refused instead, before anything is changed.</param>
+    internal static async Task ReadyToCraft(CancellationToken ct, bool waitForFight = true)
     {
+        if (!waitForFight && await Game.Run(() => Svc.Condition[ConditionFlag.InCombat]).ConfigureAwait(false))
+            throw new ToolException("The character is in combat, and Artisan cannot change the job during a fight. Finish the fight first, then " +
+                                    "try again (as a job step, it waits for the fight to end by itself).");
         await LeaveGatheringNode(ct).ConfigureAwait(false);
         for (var i = 0; i < 90 && await Game.Run(() => Svc.Condition[ConditionFlag.InCombat]).ConfigureAwait(false); i++)
             await Task.Delay(1000, ct).ConfigureAwait(false);
@@ -422,12 +427,13 @@ internal static class LongRunningTools
     /// answer (<see cref="CraftRunCheck.Answer"/>: Artisan keeps crafting). Counts the bags every second, so a product made just
     /// before the next craft uses it up is still seen, and checks Artisan every 5 seconds and at a direct call's deadline. A
     /// retainer list that a retainer plugin opens meanwhile is closed. Once Artisan is done, it waits a moment for the crafting log
-    /// to close (not cut short by a pause: the step is done by then). A stuck run, a hung solver, the time limit and cancelling
-    /// stop Artisan and let a craft in progress land; all but cancelling then fail.
+    /// to close (not cut short by a pause: the step is done by then). A stuck run, a hung solver, the time limit and
+    /// <paramref name="ct"/> (a job paused or cancelled, the plugin unloaded) stop Artisan and let a craft in progress land; all but
+    /// <paramref name="ct"/> then fail. An AI app that stops waiting for a direct call does not cancel it.
     /// </summary>
-    /// <param name="name">What is crafted, for the error messages: the list's name or the item.</param>
+    /// <param name="list">The list's name, for the error messages; null when one item is crafted a number of times (craft_item).</param>
     /// <param name="remember">Saves the progress as the job step's memory; called after every count.</param>
-    internal static async Task<CraftRunCheck> FollowArtisan(string tool, string name, CraftListProgress progress, CraftRunWatch watch,
+    internal static async Task<CraftRunCheck> FollowArtisan(string tool, string? list, CraftListProgress progress, CraftRunWatch watch,
                                                            Func<Dictionary<uint, int>> counts, System.Action remember, CancellationToken ct)
     {
         async Task Stop()
@@ -474,11 +480,11 @@ internal static class LongRunningTools
                         return CraftRunCheck.Ended;
                     case CraftRunCheck.SolverHung:
                         await Stop().ConfigureAwait(false);
-                        throw new ToolException(progress.SolverHungMessage(name, CraftRunWatch.SolverLimit) + progress.RunAgainNote());
+                        throw new ToolException(progress.SolverHungMessage(list, CraftRunWatch.SolverLimit) + progress.RunAgainNote());
                     case CraftRunCheck.Stalled:
                         var idle = progress.Idle(now);
                         await Stop().ConfigureAwait(false);
-                        throw new ToolException(progress.StallMessage(name, idle) + progress.RunAgainNote());
+                        throw new ToolException(progress.StallMessage(list, idle) + progress.RunAgainNote());
                     default:
                         await Stop().ConfigureAwait(false);
                         throw new ToolException("Timed out while Artisan was still crafting, so it was stopped." + progress.RunAgainNote());

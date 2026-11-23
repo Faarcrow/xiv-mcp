@@ -167,4 +167,78 @@ public class CraftListProgressTests
         Assert.Contains("1 craft(s) are done", p.RunAgainNote());
         Assert.Contains("running this job step again", p.RunAgainNote());
     }
+
+    // ---- One item crafted a number of times (craft_item): a run with a single entry.
+
+    private static readonly ListRecipe ThreeIngots = new(100, "Bronze Ingot", 10, 3, 1, []);
+
+    private static CraftListProgress IngotRun(int made)
+    {
+        var p = new CraftListProgress([ThreeIngots], new Dictionary<uint, int> { [1] = 9, [10] = 0 }, T0);
+        p.Observe(new Dictionary<uint, int> { [1] = 9 - 2 * made, [10] = made }, T0.AddSeconds(30));
+        return p;
+    }
+
+    [Fact]
+    public void An_item_run_that_crafted_nothing_names_the_likely_causes()
+    {
+        var message = IngotRun(made: 0).ItemShortfall(bagsFull: false, inJob: true);
+        Assert.Contains("without crafting Bronze Ingot", message);
+        Assert.Contains("missing materials", message);
+        Assert.Contains("wrong job or gear", message);
+        Assert.DoesNotContain("again", message); // nothing to continue from
+    }
+
+    [Fact]
+    public void An_item_run_cut_short_says_how_many_were_made_and_how_to_get_the_rest()
+    {
+        var p = IngotRun(made: 2);
+        var inJob = p.ItemShortfall(bagsFull: false, inJob: true);
+        Assert.Contains("2 of 3", inJob);
+        Assert.Contains("running this job step again", inJob);
+        // Called directly, nothing remembers the crafts: asking for the full amount again would craft it all once more.
+        var direct = p.ItemShortfall(bagsFull: false, inJob: false);
+        Assert.Contains("2 of 3", direct);
+        Assert.Contains("amount=1", direct);
+    }
+
+    [Fact]
+    public void Full_bags_are_named_as_the_cause()
+    {
+        var message = IngotRun(made: 1).ItemShortfall(bagsFull: true, inJob: true);
+        Assert.Contains("bags are full", message);
+        Assert.DoesNotContain("missing materials", message);
+    }
+
+    [Fact]
+    public void Stuck_and_hung_messages_for_one_item_name_the_item_not_a_list()
+    {
+        var p = IngotRun(made: 2);
+        var stall = p.StallMessage(listName: null, TimeSpan.FromMinutes(5));
+        Assert.StartsWith("Artisan made no progress on Bronze Ingot", stall);
+        Assert.DoesNotContain("''", stall);
+        Assert.Contains("Bronze Ingot (recipe 100, 2 of 3 crafts done)", stall);
+        Assert.Contains("missing materials", stall);
+        Assert.DoesNotContain("list", stall);
+        var hung = p.SolverHungMessage(listName: null, TimeSpan.FromMinutes(3));
+        Assert.StartsWith("Artisan's solver hung", hung); // what jobs retry on
+        Assert.Contains("Bronze Ingot (recipe 100)", hung);
+        Assert.DoesNotContain("''", hung);
+        Assert.DoesNotContain("list", hung);
+        Assert.True(XivMcp.Jobs.StepRetry.ShouldRetry(hung, attempts: 1));
+    }
+
+    [Fact]
+    public void A_finished_item_run_has_no_shortfall() =>
+        Assert.Null(IngotRun(made: 3).ItemShortfall(bagsFull: true, inJob: true));
+
+    [Fact]
+    public void A_direct_call_that_answers_early_says_how_far_the_crafting_got_and_that_it_goes_on()
+    {
+        var note = IngotRun(made: 1).ItemStillCrafting();
+        Assert.Contains("Bronze Ingot", note);
+        Assert.Contains("1 of 3", note);
+        Assert.Contains("job step", note);
+        Assert.DoesNotMatch(@"n't", note);
+    }
 }
