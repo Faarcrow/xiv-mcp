@@ -457,6 +457,310 @@ public class RankProgressTests
 
     [Fact]
     public void The_top_rank_has_no_next_rank() => Assert.Null(RankProgress.DeliveriesToRankUp(0, 0, 0));
+
+    [Theory]
+    [InlineData(240, 480, 80, 3, 3)]
+    [InlineData(450, 480, 80, 1, 1)]
+    [InlineData(450, 480, 80, 3, 1)]
+    [InlineData(390, 780, 130, 3, 3)]
+    [InlineData(0, 480, 80, 3, null)]
+    [InlineData(0, 0, 0, 6, null)]
+    [InlineData(240, 480, 80, 0, null)]
+    [InlineData(480, 480, 80, 3, null)]
+    public void The_rank_up_is_the_delivery_that_reaches_the_next_rank(int satisfaction, int needed, int perDelivery, int count, int? expected) =>
+        Assert.Equal(expected, RankProgress.RankUpAt(satisfaction, needed, perDelivery, count));
+
+    private static DeliveryNpc Client(string name, int satisfaction, int needed, int perDelivery) =>
+        new(name, true, [6, 6, 6], new HashSet<DeliveryKind>())
+        {
+            Satisfaction = satisfaction, SatisfactionNeeded = needed, SatisfactionPerDelivery = [perDelivery, perDelivery, perDelivery], GainsRank = needed > 0,
+        };
+
+    [Fact]
+    public void The_first_delivery_of_a_run_can_rank_up()
+    {
+        var kai = Client("Kai-Shirr", 400, 480, 80);
+        Assert.Equal([1], DeliveryPlan.RankUps([new(kai, DeliveryKind.Craft, 1)]));
+    }
+
+    [Fact]
+    public void No_rank_up_when_the_planned_deliveries_do_not_reach_it()
+    {
+        var adkiragh = Client("Adkiragh", 0, 780, 130);
+        var zhloe = Client("Zhloe Aliapoh", 0, 0, 0);
+        Assert.Equal([null, null], DeliveryPlan.RankUps([new(adkiragh, DeliveryKind.Craft, 5), new(zhloe, DeliveryKind.Gather, 6)]));
+    }
+
+    [Fact]
+    public void A_client_ranks_up_in_its_second_run_when_the_first_falls_short()
+    {
+        // Two crafts fit under the scrip cap, then gathering: 240 + 2 x 80 = 400, so the first gathering delivery reaches 480.
+        var kai = Client("Kai-Shirr", 240, 480, 80);
+        var adkiragh = Client("Adkiragh", 390, 780, 130);
+        var plan = new List<DeliveryRun> { new(kai, DeliveryKind.Craft, 2), new(kai, DeliveryKind.Gather, 3), new(adkiragh, DeliveryKind.Craft, 3) };
+        Assert.Equal([null, 1, 3], DeliveryPlan.RankUps(plan));
+    }
+
+    [Fact]
+    public void Only_the_first_rank_up_of_a_client_counts()
+    {
+        // The first run's delivery reaches 480; the second run starts from there, so it reaches nothing more.
+        var kai = Client("Kai-Shirr", 400, 480, 80);
+        Assert.Equal([1, null], DeliveryPlan.RankUps([new(kai, DeliveryKind.Craft, 1), new(kai, DeliveryKind.Gather, 5)]));
+    }
+}
+
+public class RankUpTurnInTests
+{
+    // Kai-Shirr at 240/480, 80 per delivery: the third delivery ranks her up.
+    private static RankUpTurnIn Plan(bool player = true, bool gather = false, int planned = 3, int allowances = 12, int inBags = 0, int usable = 0,
+                                     bool atClient = false, int satisfaction = 240) =>
+        RankUpTurnIn.Plan(player, gather, satisfaction, 480, 80, planned, allowances, inBags, usable, atClient);
+
+    [Fact]
+    public void Without_the_player_everything_goes_in_as_before()
+    {
+        var turnIn = Plan(player: false);
+        Assert.Equal(new RankUpTurnIn(null, 3, false, false), turnIn);
+        Assert.Equal(new RankUpTurnIn(null, 3, true, false), Plan(player: false, gather: true, inBags: 3, usable: 3));
+    }
+
+    [Fact]
+    public void The_deliveries_before_the_rank_up_go_in()
+    {
+        var turnIn = Plan();
+        Assert.Equal(3, turnIn.RankUpAt);
+        Assert.Equal(2, turnIn.ToTurnIn);
+        Assert.True(turnIn.LeftToPlayer);
+    }
+
+    [Fact]
+    public void Questionable_does_not_turn_in_when_the_rank_up_is_left_to_the_player()
+    {
+        // Questionable would hand in the rank-up item too: Satisfier turns in the two before it.
+        var turnIn = Plan(gather: true, inBags: 3, usable: 3);
+        Assert.False(turnIn.ViaQuestionable);
+        Assert.Equal(2, turnIn.ToTurnIn);
+    }
+
+    [Fact]
+    public void Questionable_still_turns_in_when_no_delivery_ranks_up()
+    {
+        var turnIn = Plan(gather: true, planned: 2, inBags: 2, usable: 2);
+        Assert.Null(turnIn.RankUpAt);
+        Assert.True(turnIn.ViaQuestionable);
+    }
+
+    [Fact]
+    public void A_rank_up_past_the_weeks_deliveries_left_is_not_planned()
+    {
+        // Two deliveries left this week and three needed: the rank-up waits for next week.
+        var turnIn = Plan(allowances: 2);
+        Assert.Null(turnIn.RankUpAt);
+        Assert.Equal(3, turnIn.ToTurnIn);
+    }
+
+    [Fact]
+    public void Satisfier_stays_out_when_the_first_delivery_ranks_up_and_the_character_is_at_the_client_with_the_item()
+    {
+        Assert.True(Plan(satisfaction: 400, usable: 1, inBags: 1, atClient: true).SkipSatisfier);
+        Assert.False(Plan(satisfaction: 400, usable: 1, inBags: 1, atClient: false).SkipSatisfier);
+        Assert.False(Plan(satisfaction: 400, usable: 0, inBags: 1, atClient: true).SkipSatisfier);
+        Assert.False(Plan(satisfaction: 320, usable: 2, inBags: 2, atClient: true).SkipSatisfier);
+    }
+
+    [Fact]
+    public void Left_to_the_player_the_turn_in_ends_with_Satisfier_so_it_closes_the_clients_windows()
+    {
+        // With its count lowered Satisfier ends after the two before the rank-up and closes the client's menu itself: stopping it as
+        // soon as they are in would leave the character in the menu.
+        var turnIn = Plan();
+        Assert.False(turnIn.Done(delivered: 1, rankedUp: false));
+        Assert.False(turnIn.Done(delivered: 2, rankedUp: false));
+        Assert.True(turnIn.Done(delivered: 0, rankedUp: true));
+        Assert.True(Plan(player: false).Done(delivered: 3, rankedUp: false));
+        Assert.False(Plan(player: false).Done(delivered: 2, rankedUp: false));
+    }
+
+    [Fact]
+    public void Stalls_are_not_watched_while_Satisfier_only_walks_to_the_client()
+    {
+        Assert.False(Plan(satisfaction: 400).WatchStall);
+        Assert.True(Plan().WatchStall);
+        Assert.True(Plan(player: false).WatchStall);
+    }
+
+    [Fact]
+    public void With_nothing_before_the_rank_up_Satisfier_runs_to_its_end()
+    {
+        // Satisfier still takes the character to the client: only a rank-up ends it early.
+        var turnIn = Plan(satisfaction: 400);
+        Assert.Equal(0, turnIn.ToTurnIn);
+        Assert.False(turnIn.Done(delivered: 0, rankedUp: false));
+        Assert.True(turnIn.Done(delivered: 0, rankedUp: true));
+    }
+}
+
+public class RankUpJobTests
+{
+    [Fact]
+    public void Without_the_player_every_run_gets_a_step()
+    {
+        Assert.Equal((3, false), RankUpJob.Cut([null, 3, null], playerRanksUp: false));
+    }
+
+    [Fact]
+    public void With_the_player_the_job_plans_again_after_the_first_rank_up()
+    {
+        Assert.Equal((2, true), RankUpJob.Cut([null, 3, 1], playerRanksUp: true));
+        Assert.Equal((1, true), RankUpJob.Cut([1], playerRanksUp: true));
+    }
+
+    [Fact]
+    public void Without_a_rank_up_the_plan_is_not_made_again()
+    {
+        Assert.Equal((2, false), RankUpJob.Cut([null, null], playerRanksUp: true));
+    }
+
+    [Fact]
+    public void Planning_again_keeps_the_kind_and_the_clients()
+    {
+        var args = RankUpJob.PlanAgainArgs("gather", ["Kai-Shirr", "Adkiragh"]);
+        Assert.True(args["player_ranks_up"]!.GetValue<bool>());
+        Assert.Equal("gather", args["kind"]!.GetValue<string>());
+        Assert.Equal(["Kai-Shirr", "Adkiragh"], args["clients"]!.AsArray().Select(n => n!.GetValue<string>()));
+        var plain = RankUpJob.PlanAgainArgs(null, null);
+        Assert.False(plain.ContainsKey("kind"));
+        Assert.False(plain.ContainsKey("clients"));
+    }
+}
+
+public class PlayerRankUpTests
+{
+    private static readonly DateTime Asked = new(2026, 11, 24, 9, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public void The_ask_names_the_item_the_client_and_the_wait()
+    {
+        var text = PlayerRankUp.Ask("Signature Buuz Cookware", "Adkiragh");
+        Assert.Contains("Signature Buuz Cookware", text);
+        Assert.Contains("Adkiragh", text);
+        Assert.Contains("30 minutes", text);
+    }
+
+    [Fact]
+    public void Texts_use_no_contractions()
+    {
+        foreach (var text in new[]
+                 {
+                     PlayerRankUp.Ask("Medical Supplies", "Charlemend"), PlayerRankUp.TimedOut("Medical Supplies", "Charlemend", true, false),
+                     PlayerRankUp.TimedOut("Medical Supplies", "Charlemend", false, true), PlayerRankUp.WentInShort("Medical Supplies", "Charlemend"),
+                     PlayerRankUp.StillInStory("Charlemend"), PlayerRankUp.HeldWithoutWindow("Charlemend"), PlayerRankUp.AlreadyRankedUp("Charlemend", 3),
+                 })
+            Assert.DoesNotMatch(@"(n't|'re|'ve|'ll|'d|(it|that|there|what)'s|I'm)", text);
+    }
+
+    [Fact]
+    public void Timing_out_says_how_to_go_on()
+    {
+        var text = PlayerRankUp.TimedOut("Medical Supplies", "Charlemend", inBags: true, inConversation: false);
+        Assert.Contains("still in your bags", text);
+        Assert.Contains("skip this step", text);
+        Assert.Contains("takes you back to Charlemend", text);
+    }
+
+    [Fact]
+    public void Timing_out_does_not_claim_an_item_that_is_gone()
+    {
+        var text = PlayerRankUp.TimedOut("Medical Supplies", "Charlemend", inBags: false, inConversation: false);
+        Assert.DoesNotContain("still in your bags", text);
+        Assert.Contains("not in your bags", text);
+    }
+
+    [Fact]
+    public void Waiting_ends_after_the_limit()
+    {
+        var wait = new HandInWait(Asked, deliveriesLeft: 3);
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddMinutes(29), inConversation: false, rankChanged: false, deliveriesLeftNow: 3));
+        Assert.Equal(HandIn.TimedOut, wait.Poll(Asked.AddMinutes(31), inConversation: false, rankChanged: false, deliveriesLeftNow: 3));
+    }
+
+    [Fact]
+    public void A_conversation_the_player_started_keeps_the_wait_going_up_to_the_hard_limit()
+    {
+        var wait = new HandInWait(Asked, deliveriesLeft: 3);
+        wait.Poll(Asked.AddMinutes(1), inConversation: false, rankChanged: false, deliveriesLeftNow: 3);
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddMinutes(40), inConversation: true, rankChanged: false, deliveriesLeftNow: 3));
+        Assert.True(wait.PlayersConversation);
+        Assert.Equal(HandIn.TimedOutInConversation, wait.Poll(Asked.AddHours(2.1), inConversation: true, rankChanged: false, deliveriesLeftNow: 3));
+    }
+
+    [Fact]
+    public void A_conversation_held_from_before_the_ask_does_not_keep_the_wait_going()
+    {
+        // Satisfier's menu left open, an away player: the 30 minutes still apply, and the menu is not the player's to keep.
+        var wait = new HandInWait(Asked, deliveriesLeft: 3);
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddMinutes(1), inConversation: true, rankChanged: false, deliveriesLeftNow: 3));
+        Assert.False(wait.PlayersConversation);
+        Assert.Equal(HandIn.TimedOut, wait.Poll(Asked.AddMinutes(31), inConversation: true, rankChanged: false, deliveriesLeftNow: 3));
+    }
+
+    [Fact]
+    public void The_rank_up_ends_the_wait()
+    {
+        var wait = new HandInWait(Asked, deliveriesLeft: 3);
+        Assert.Equal(HandIn.RankedUp, wait.Poll(Asked.AddMinutes(2), inConversation: true, rankChanged: true, deliveriesLeftNow: 2));
+    }
+
+    [Fact]
+    public void A_hand_in_that_does_not_rank_up_ends_the_wait_after_a_second_look()
+    {
+        // The rank may change a moment after the delivery is counted: only a second look without it is a delivery that fell short.
+        var wait = new HandInWait(Asked, deliveriesLeft: 3);
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddMinutes(2), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
+        Assert.Equal(HandIn.WentInShort, wait.Poll(Asked.AddMinutes(2.1), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
+    }
+
+    [Fact]
+    public void After_the_hand_in_the_story_is_over_after_two_looks_out_of_it()
+    {
+        var story = new StoryWait(Asked);
+        Assert.Equal(StoryEnd.Wait, story.Poll(Asked.AddSeconds(2), inConversation: false, heldWithoutWindow: false));
+        Assert.Equal(StoryEnd.Wait, story.Poll(Asked.AddSeconds(4), inConversation: true, heldWithoutWindow: false));
+        Assert.Equal(StoryEnd.Wait, story.Poll(Asked.AddSeconds(6), inConversation: false, heldWithoutWindow: false));
+        Assert.Equal(StoryEnd.Over, story.Poll(Asked.AddSeconds(8), inConversation: false, heldWithoutWindow: false));
+    }
+
+    [Fact]
+    public void A_story_that_holds_the_character_too_long_is_reported()
+    {
+        Assert.Equal(StoryEnd.TooLong, new StoryWait(Asked).Poll(Asked.AddMinutes(11), inConversation: true, heldWithoutWindow: false));
+        var held = new StoryWait(Asked);
+        Assert.Equal(StoryEnd.Wait, held.Poll(Asked.AddMinutes(2), inConversation: true, heldWithoutWindow: true));
+        Assert.Equal(StoryEnd.Wait, held.Poll(Asked.AddMinutes(2.5), inConversation: true, heldWithoutWindow: true));
+        Assert.Equal(StoryEnd.HeldWithoutWindow, held.Poll(Asked.AddMinutes(3.1), inConversation: true, heldWithoutWindow: true));
+    }
+
+    [Fact]
+    public void A_later_run_of_the_step_knows_the_client_ranked_up()
+    {
+        var memory = RankUpMemory.Remember("Kai-Shirr", 2);
+        Assert.True(RankUpMemory.RankedUpSince(memory, "Kai-Shirr", rankNow: 3));
+        Assert.False(RankUpMemory.RankedUpSince(memory, "Kai-Shirr", rankNow: 2));
+        Assert.False(RankUpMemory.RankedUpSince(memory, "Adkiragh", rankNow: 3));
+        Assert.False(RankUpMemory.RankedUpSince(null, "Kai-Shirr", rankNow: 3));
+        // As jobs.json gives it back.
+        var stored = System.Text.Json.Nodes.JsonNode.Parse(memory.ToJsonString())!.AsObject();
+        Assert.True(RankUpMemory.RankedUpSince(stored, "Kai-Shirr", rankNow: 3));
+    }
+
+    [Theory]
+    [InlineData(6, 240, 480, 80, 3)]
+    [InlineData(2, 240, 480, 80, 2)]
+    [InlineData(6, 0, 0, 0, 6)]
+    [InlineData(0, 240, 480, 80, 0)]
+    public void What_a_request_still_takes_is_counted_as_Satisfier_counts_it(int left, int satisfaction, int needed, int perDelivery, int expected) =>
+        Assert.Equal(expected, RankProgress.StillTakes(left, satisfaction, needed, perDelivery));
 }
 
 public class DeliveryAchievementTests

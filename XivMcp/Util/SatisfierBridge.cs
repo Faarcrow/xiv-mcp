@@ -40,6 +40,9 @@ internal static class SatisfierBridge
                 AchievementLeft = achievementLeft,
                 Blocked = new[] { DeliveryKind.Craft, DeliveryKind.Gather }
                     .Where(k => levels.Jobs[(int)k]?.Blocks(InBags(levels, k), Remaining[(int)k]) == true).ToHashSet(),
+                Satisfaction = Satisfaction,
+                SatisfactionNeeded = SatisfactionMax,
+                SatisfactionPerDelivery = levels.SatisfactionPerDelivery,
             };
 
         /// <summary>The request's items in the bags that Satisfier counts as delivered or made (<see cref="RequestData.MinCollectability"/>). Framework thread.</summary>
@@ -69,11 +72,23 @@ internal static class SatisfierBridge
         var clients = new List<Client>();
         foreach (var npc in list)
         {
-            var max = Int(npc, "MaxDeliveries");
+            var index = Int(npc, "Index");
             var used = Int(npc, "UsedDeliveries");
             var fish = Plugin.Get(npc, "FishData");
-            var remaining = Enumerable.Range(0, 3).Select(i => Convert.ToInt32(Plugin.Call(npc, "RemainingTurnins", i))).ToArray();
-            var index = Int(npc, "Index");
+            int max;
+            int[] remaining;
+            // While a rank-up is left to the player, Satisfier's own count is lowered (LimitTurnIns): the real numbers come from the count
+            // it had, counted as Satisfier counts them.
+            if (LoweredFor(npc) is { } lowered)
+            {
+                max = lowered.Original;
+                remaining = [.. lowered.PerDelivery.Select(per => RankProgress.StillTakes(Math.Max(0, max - used), Int(npc, "SatisfactionCur"), Int(npc, "SatisfactionMax"), per))];
+            }
+            else
+            {
+                max = Int(npc, "MaxDeliveries");
+                remaining = [.. Enumerable.Range(0, 3).Select(i => Convert.ToInt32(Plugin.Call(npc, "RemainingTurnins", i)))];
+            }
             var rewards = (uint[])(Plugin.Get(npc, "Rewards") ?? new uint[3]);
             clients.Add(new Client(npc, index, Plugin.Get(npc, "Name") as string ?? "?", IsUnlocked(index),
                 Int(npc, "Rank"), Int(npc, "SatisfactionCur"), Int(npc, "SatisfactionMax"), Math.Max(0, max - used),
@@ -323,6 +338,126 @@ internal static class SatisfierBridge
         var type = Plugin.Type(kind switch { DeliveryKind.Craft => "Satisfy.AutoCraft", DeliveryKind.Gather => "Satisfy.AutoGather", _ => "Satisfy.AutoFish" });
         var task = Activator.CreateInstance(type, client.Info) ?? throw Plugin.Unsupported(type.Name);
         Plugin.Call(Automation, "Start", task, null, false);
+    }
+
+    /// <summary>
+    /// Has the task just started for the client turn in only <paramref name="deliveries"/> (none: it still makes the items and walks to
+    /// the client), until disposed. Satisfier's turn-in goes on until the client has no deliveries left this week, then closes the
+    /// client's windows by itself; its count of the client's weekly deliveries is lowered to end there. Its task reads that count once
+    /// when it starts, for how many to buy, craft or gather, so the lower count goes in on the first frame the task shows a status:
+    /// it then still makes all of them. On that first frame the task can already be at the client and turn in with the old count when
+    /// the delivery window is open; with nothing to turn in, the caller leaves Satisfier out then (<see cref="RankUpTurnIn.SkipSatisfier"/>).
+    /// If the count cannot be lowered, Satisfier is stopped. The count goes back when this is disposed, once Satisfier is no longer
+    /// running, or when XIV MCP unloads (<see cref="RestoreTurnInLimits"/>); a Satisfier still running then is stopped first, as with
+    /// the old count it would hand in the player's delivery and click through the story. <paramref name="perDelivery"/> is what one
+    /// delivery of each request adds, for the real numbers <see cref="Clients"/> shows meanwhile. Call right after <see cref="Start"/>.
+    /// Framework thread.
+    /// </summary>
+    public static IDisposable LimitTurnIns(Client client, int deliveries, int[] perDelivery) =>
+        new TurnInLimit(client.Info, Int(client.Info, "UsedDeliveries") + deliveries, perDelivery);
+
+    private static readonly List<TurnInLimit> Limits = [];
+
+    /// <summary>The lowered count of a client of Satisfier's (its NPCInfo), if one is in place now.</summary>
+    private static TurnInLimit? LoweredFor(object npc)
+    {
+        lock (Limits) return Limits.FirstOrDefault(l => ReferenceEquals(l.Npc, npc) && l.Lowered);
+    }
+
+    /// <summary>
+    /// Puts back every count still lowered, right away (stopping Satisfier first if it still runs): XIV MCP unloads, and the framework
+    /// may not run its updates any more. Framework thread.
+    /// </summary>
+    public static void RestoreTurnInLimits()
+    {
+        List<TurnInLimit> live;
+        lock (Limits) live = [.. Limits];
+        foreach (var limit in live) limit.Dispose();
+    }
+
+    private sealed class TurnInLimit : IDisposable
+    {
+        private readonly int max;
+        private IDisposable? applied;
+        private bool done;
+        private long nextCheck;
+
+        public TurnInLimit(object npc, int max, int[] perDelivery)
+        {
+            Npc = npc;
+            this.max = max;
+            PerDelivery = perDelivery;
+            lock (Limits) Limits.Add(this);
+            Svc.Framework.Update += OnUpdate;
+        }
+
+        public object Npc { get; }
+
+        public int[] PerDelivery { get; }
+
+        /// <summary>Satisfier's count before it was lowered.</summary>
+        public int Original { get; private set; }
+
+        public bool Lowered => applied is not null && !done;
+
+        private void OnUpdate(Dalamud.Plugin.Services.IFramework framework)
+        {
+            if (done) return;
+            try
+            {
+                if (applied is null)
+                {
+                    if (Status.Length == 0) return;
+                    Original = Int(Npc, "MaxDeliveries");
+                    applied = Plugin.Override(Npc, ("MaxDeliveries", max));
+                    nextCheck = Environment.TickCount64 + 1000;
+                }
+                // Once Satisfier is done the turn-in is over: the count goes back, also when the delivery that lowered it never ends.
+                else if (Environment.TickCount64 >= nextCheck)
+                {
+                    nextCheck = Environment.TickCount64 + 1000;
+                    if (!Running) Dispose();
+                }
+            }
+            catch (Exception ex)
+            {
+                Svc.Log.Warning($"[MCP] Could not limit Satisfier's turn-in, stopping it: {ex.Message}");
+                Dispose();
+                try { Stop(); }
+                catch (Exception stop) { Svc.Log.Warning($"[MCP] Could not stop Satisfier: {stop.Message}"); }
+            }
+        }
+
+        /// <summary>Framework thread.</summary>
+        public void Dispose()
+        {
+            if (done) return;
+            done = true;
+            Svc.Framework.Update -= OnUpdate;
+            lock (Limits) Limits.Remove(this);
+            if (applied is null) return;
+            // With the old count back, a Satisfier still turning in would hand in the player's delivery too.
+            try { if (Running) Stop(); }
+            catch (Exception ex) { Svc.Log.Warning($"[MCP] Could not stop Satisfier before its count goes back: {ex.Message}"); }
+            applied.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The character is at the client: the client's delivery window (the game's agent for this client) or a hand-over window is open,
+    /// or the character stands within reach of the client. Satisfier's first frame would turn in from there. Framework thread.
+    /// </summary>
+    public static unsafe bool AtClient(Client client)
+    {
+        var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentSatisfactionSupply.Instance();
+        if (agent != null && agent->IsAgentActive() && agent->NpcInfo.Id == client.Index + 1) return true;
+        if (RetainerUi.Ready("Request")) return true;
+        try
+        {
+            return Plugin.Get(client.Info, "CraftData") is { } craft && Plugin.Get(craft, "TurnInLocation") is System.Numerics.Vector3 at &&
+                   Svc.Objects.LocalPlayer is { } me && System.Numerics.Vector3.Distance(me.Position, at) <= 4f;
+        }
+        catch (Mcp.ToolException) { return false; }
     }
 
     public static bool Running => Plugin.Get(Automation, "Running") is true;

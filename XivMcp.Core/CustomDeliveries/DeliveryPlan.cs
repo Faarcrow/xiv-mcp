@@ -15,6 +15,8 @@ public enum DeliveryKind { Craft = 0, Gather = 1, Fish = 2 }
 /// <see cref="AchievementLeft"/> is how many deliveries the client's achievements still need (unknown: none); <see cref="Blocked"/> are
 /// the requests that cannot be made: the job that would make them is too far below their level and the items are not in the bags
 /// (see <see cref="DeliveryJob.Blocks"/>).
+/// <see cref="Satisfaction"/>, <see cref="SatisfactionNeeded"/> (0 at the top rank) and <see cref="SatisfactionPerDelivery"/> (by kind) are
+/// its way to the next rank.
 /// </summary>
 public sealed record DeliveryNpc(string Name, bool Unlocked, int[] Remaining, IReadOnlySet<DeliveryKind> Bonus)
 {
@@ -23,6 +25,9 @@ public sealed record DeliveryNpc(string Name, bool Unlocked, int[] Remaining, IR
     public IReadOnlyList<CappedReward>[]? Rewards { get; init; }
     public int? AchievementLeft { get; init; }
     public IReadOnlySet<DeliveryKind>? Blocked { get; init; }
+    public int Satisfaction { get; init; }
+    public int SatisfactionNeeded { get; init; }
+    public int[]? SatisfactionPerDelivery { get; init; }
 
     public int RemainingFor(DeliveryKind kind) => Remaining[(int)kind];
 }
@@ -93,4 +98,24 @@ public static class DeliveryPlan
             .Where(r => r.Npc.Blocked?.Contains(r.Kind) == true)
             .Distinct()
             .ToList();
+
+    /// <summary>
+    /// Per run, which of its deliveries ranks the client up (1: its first), or null when none does. A client's satisfaction grows
+    /// over its runs in plan order; only its first rank-up counts, as its requests change then (satisfaction past the rank's
+    /// threshold ranks up nothing more).
+    /// </summary>
+    public static int?[] RankUps(IReadOnlyList<DeliveryRun> plan)
+    {
+        var result = new int?[plan.Count];
+        var satisfaction = new Dictionary<string, int>();
+        for (var i = 0; i < plan.Count; i++)
+        {
+            var (npc, kind, count) = (plan[i].Npc, plan[i].Kind, plan[i].Count);
+            var have = satisfaction.TryGetValue(npc.Name, out var s) ? s : npc.Satisfaction;
+            var per = npc.SatisfactionPerDelivery?[(int)kind] ?? 0;
+            result[i] = RankProgress.RankUpAt(have, npc.SatisfactionNeeded, per, count);
+            satisfaction[npc.Name] = have + count * per;
+        }
+        return result;
+    }
 }

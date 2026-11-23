@@ -57,19 +57,23 @@ internal static class CustomDeliveryTools
                           "the reward scrips' cap (get_custom_deliveries shows fitUnderScripCap), and refuses when none fit: spend the scrips " +
                           "first. Satisfier crafts and gathers with the job its 'Job choice' setting picks, without looking at the request's " +
                           "level: a crafting or gathering request that job cannot make (levelOk false in get_custom_deliveries) is refused " +
-                          "before anything is bought, and without 'kind' the next kind is chosen. Requires 'Custom Deliveries' in /xivmcp.",
+                          "before anything is bought, and without 'kind' the next kind is chosen. With 'player_ranks_up' the delivery that " +
+                          "ranks the client up is left to the player, and the tool waits for them: run it as a job step (start_job, or " +
+                          "do_custom_deliveries with the same argument). Requires 'Custom Deliveries' in /xivmcp.",
             InputSchema = """
                 {
                   "type": "object",
                   "properties": {
                     "client": { "type": "string", "description": "The client's name (as get_custom_deliveries names them)." },
-                    "kind": { "type": "string", "enum": ["craft", "gather", "fish"], "description": "Default: the bonus request, else craft, else gather. Use 'fish' only when the player asked for fishing." }
+                    "kind": { "type": "string", "enum": ["craft", "gather", "fish"], "description": "Default: the bonus request, else craft, else gather. Use 'fish' only when the player asked for fishing." },
+                    "player_ranks_up": { "type": "boolean", "description": "Leave the delivery that ranks the client up to the player, so they can watch the client's rank-up story (default false: Satisfier hands it in and the story is clicked through). The deliveries before it go in as usual, always with Satisfier (Questionable would hand in the rank-up item too). For the rank-up one the item is made and the character taken to the client; then the player is told in game, and the tool waits until the client's rank changes and the player is out of the story, without clicking anything. Stopping or failing the step while the player is in a conversation they started, or in the story, leaves it alone too. When the hand-in goes in without reaching the next rank (an item below the top collectability tier gives less satisfaction), the step ends saying so. After 30 minutes without a hand-in it fails (in a conversation the player started after being asked, after 2 hours): when the player handed it in after all, skip the step; calling it again makes the item again if it is gone, has Satisfier take the character back to the client, then asks again. A run after the client ranked up (a resume or retry of the same job step) delivers nothing and ends. When the story holds the character for over 10 minutes after the hand-in, it fails saying so: the delivery is done, skip the step. Changes nothing when no delivery of this week reaches the next rank." }
                   },
                   "required": ["client"]
                 }
                 """,
             ReadOnly = false,
-            Handler = (args, ct) => Deliver(args.String("client") ?? throw new ToolException("'client' is required."), Kind(args), ct),
+            Handler = (args, ct) => Deliver(args.String("client") ?? throw new ToolException("'client' is required."), Kind(args),
+                                            args.Bool("player_ranks_up", false), ct),
         };
 
         yield return new McpTool
@@ -83,19 +87,26 @@ internal static class CustomDeliveryTools
                           "'leftOutForLevel' names those the plan would otherwise have delivered), then " +
                           "delivers them one client after another with deliver_custom_delivery. Fishing requests are caught first with " +
                           "AutoHook (switch to Fisher, bait, the spot, fish_until), only with kind 'fish'. Optional 'kind' for everyone and 'clients' to limit it. " +
+                          "The plan shows per run 'rankUpDelivery': which of its deliveries ranks the client up, if one does. With " +
+                          "'player_ranks_up' each rank-up delivery is left to the player (see deliver_custom_delivery), and the job's " +
+                          "deliveries stop at the first one, followed by a do_custom_deliveries step that plans the rest again, as the client " +
+                          "has new requests then. With player_ranks_up as a job step it puts its steps into that job right after itself " +
+                          "(the job's later steps stay) instead of starting another job. " +
                           "Follow it with get_job. Requires 'Custom Deliveries' in /xivmcp; each step follows its own module.",
             InputSchema = """
                 {
                   "type": "object",
                   "properties": {
                     "kind": { "type": "string", "enum": ["craft", "gather", "fish"], "description": "Deliver this kind for every client. Use 'fish' only when the player asked for fishing." },
-                    "clients": { "type": "array", "items": { "type": "string" }, "description": "Only these clients." }
+                    "clients": { "type": "array", "items": { "type": "string" }, "description": "Only these clients." },
+                    "player_ranks_up": { "type": "boolean", "description": "Leave each delivery that ranks a client up to the player, to watch the client's rank-up story (default false: Satisfier hands it in and the story is clicked through). The job then waits for the player at each rank-up (30 minutes, then that step fails and the job waits for retry or skip), and plans again after it. While it waits, other tool calls that act in the game are refused, as during any job step." }
                   }
                 }
                 """,
             ReadOnly = false,
             Handler = async (args, ct) =>
             {
+                var playerRanksUp = args.Bool("player_ranks_up", false);
                 var only = args.Array("clients")?.Select(n => n?.ToString() ?? "").Where(n => n.Length > 0).ToList();
                 var (clients, allowances, levels) = await ReadClients(ct).ConfigureAwait(false);
                 var achievementLeft = new Dictionary<string, int?>();
@@ -108,11 +119,19 @@ internal static class CustomDeliveryTools
                 var leftOut = DeliveryPlan.LeftOutForLevel(npcs, possible, allowances, Kind(args), only)
                     .Select(x => CannotMake(clients.First(c => c.Name == x.Npc.Name), x.Kind, levels[x.Npc.Name])).OfType<string>().ToList();
                 if (plan.Count == 0)
-                    throw new ToolException(allowances == 0 ? "No custom deliveries left this week."
-                                                            : string.Join(" ", ["Nothing to deliver: no unlocked client has a request a plugin can do.", .. leftOut]));
+                {
+                    var why = allowances == 0 ? "No custom deliveries left this week."
+                                              : string.Join(" ", ["Nothing to deliver: no unlocked client has a request a plugin can do.", .. leftOut]);
+                    // Planning again after a rank-up: nothing left ends the deliveries, not the job.
+                    if (playerRanksUp && JobManager.Instance?.InsertAfterCurrent("do_custom_deliveries", []) == true) return new { done = true, message = why };
+                    throw new ToolException(why);
+                }
 
+                var rankUps = DeliveryPlan.RankUps(plan);
+                // After a rank-up the client has new requests, and the plan from there on no longer holds: plan again then.
+                var (runs, planAgain) = RankUpJob.Cut(rankUps, playerRanksUp);
                 var steps = new List<JobManager.Step>();
-                foreach (var (run, i) in plan.Select((r, i) => (r, i)))
+                foreach (var (run, i) in plan.Take(runs).Select((r, i) => (r, i)))
                 {
                     var c = clients.First(x => x.Name == run.Npc.Name);
                     if (run.Kind == DeliveryKind.Fish)
@@ -126,23 +145,41 @@ internal static class CustomDeliveryTools
                             steps.AddRange(catchSteps);
                         }
                     }
-                    steps.Add(new()
+                    var deliver = new JobManager.Step
                     {
                         Id = $"d{i}", Tool = "deliver_custom_delivery",
                         Args = new JsonObject { ["client"] = c.Name, ["kind"] = run.Kind.ToString().ToLowerInvariant() },
                         Note = $"Deliver {run.Count} {Items.Name(c.Items[(int)run.Kind])} to {c.Name} ({run.Kind.ToString().ToLowerInvariant()})",
-                    });
+                    };
+                    if (playerRanksUp) deliver.Args["player_ranks_up"] = true;
+                    if (playerRanksUp && rankUps[i] is not null) deliver.Note += RankUpJob.RankUpNote;
+                    steps.Add(deliver);
                 }
-                var job = jobs().Start($"Custom deliveries: {plan.Sum(p => p.Count)} for {plan.Count} client{(plan.Count == 1 ? "" : "s")}", steps, client());
+                if (planAgain)
+                    steps.Add(new()
+                    {
+                        Id = $"r{runs - 1}", Tool = "do_custom_deliveries", Args = RankUpJob.PlanAgainArgs(args.String("kind"), only),
+                        Note = $"Plan the rest again after {plan[runs - 1].Npc.Name}'s rank-up",
+                    });
+                var planned = plan.Select((p, i) => new
+                {
+                    client = p.Npc.Name, kind = p.Kind.ToString().ToLowerInvariant(), count = p.Count, bonus = p.Npc.Bonus.Contains(p.Kind),
+                    ranksUp = p.Npc.GainsRank, rankUpDelivery = rankUps[i], achievementDeliveriesLeft = p.Npc.AchievementLeft,
+                });
+                var plansAgain = planAgain ? $"The deliveries stop after {plan[runs - 1].Npc.Name}'s rank-up, and the rest is planned again then: the client has new requests." : null;
+                if (playerRanksUp && JobManager.Instance?.InsertAfterCurrent("do_custom_deliveries", steps) == true)
+                    return new { added = $"{steps.Count} step(s) after this one.", allowancesLeft = allowances, plan = planned, plansAgain,
+                                 leftOutForLevel = leftOut.Count > 0 ? leftOut : null };
+                var clientCount = plan.Select(p => p.Npc.Name).Distinct().Count();
+                // A job that plans again changes its deliveries on the way: its name keeps no counts.
+                var job = jobs().Start(playerRanksUp ? "Custom deliveries, rank-ups by you"
+                                                     : $"Custom deliveries: {plan.Sum(p => p.Count)} for {clientCount} client{(clientCount == 1 ? "" : "s")}", steps, client());
                 return new
                 {
                     started = JobManager.Describe(job),
                     allowancesLeft = allowances,
-                    plan = plan.Select(p => new
-                    {
-                        client = p.Npc.Name, kind = p.Kind.ToString().ToLowerInvariant(), count = p.Count, bonus = p.Npc.Bonus.Contains(p.Kind),
-                        ranksUp = p.Npc.GainsRank, achievementDeliveriesLeft = p.Npc.AchievementLeft,
-                    }),
+                    plan = planned,
+                    plansAgain,
                     leftOutForLevel = leftOut.Count > 0 ? leftOut : null,
                 };
             },
@@ -292,11 +329,15 @@ internal static class CustomDeliveryTools
         }
     }
 
-    private static async Task<object> Deliver(string name, DeliveryKind? kind, CancellationToken ct)
+    private static async Task<object> Deliver(string name, DeliveryKind? kind, bool playerRanksUp, CancellationToken ct)
     {
         var (found, allowances, levelsOf) = await ReadClients(ct, name).ConfigureAwait(false);
         var c = found[0];
         var levels = levelsOf[c.Name];
+        // A run of this step after the player ranked the client up (a resume, a retry) must not start on the next rank's requests.
+        var memory = playerRanksUp ? JobManager.Instance?.StepMemory(DeliverTool) : null;
+        if (RankUpMemory.RankedUpSince(memory, c.Name, c.Rank))
+            return new { client = c.Name, delivered = 0, rank = c.Rank, done = true, rankedUp = PlayerRankUp.AlreadyRankedUp(c.Name, c.Rank) };
         if (!c.Unlocked) throw new ToolException($"{c.Name} is not unlocked yet.");
         if (c.DeliveriesLeft == 0) throw new ToolException($"{c.Name} takes no more deliveries this week.");
         if (allowances == 0) throw new ToolException("No custom deliveries left this week.");
@@ -336,14 +377,21 @@ internal static class CustomDeliveryTools
             statuses.Add($"Only {fits} of {planned} deliveries fit under the cap: {why}.");
             planned = fits;
         }
-        var (inBags, usable) = await Game.Run(() => (Items.CountInBags(c.Items[(int)chosen]), c.InBags(levels, chosen))).ConfigureAwait(false);
-        var viaQuestionable = TurnInWatch.TurnInWithQuestionable(chosen == DeliveryKind.Gather, inBags, planned);
+        var (inBags, usable, atClient) = await Game.Run(() =>
+            (Items.CountInBags(c.Items[(int)chosen]), c.InBags(levels, chosen), SatisfierBridge.AtClient(c))).ConfigureAwait(false);
+        // With player_ranks_up the delivery that ranks the client up is left to the player; the ones before it go in as usual.
+        var plan = RankUpTurnIn.Plan(playerRanksUp, chosen == DeliveryKind.Gather, c.Satisfaction, c.SatisfactionMax, levels.SatisfactionPerDelivery[(int)chosen],
+                                     planned, allowances, inBags, usable, atClient);
+        var toTurnIn = plan.ToTurnIn;
+        var viaQuestionable = plan.ViaQuestionable;
         // Satisfier crafts and gathers with the job its settings pick, whatever the request's level, and makes all the request still
         // takes, whatever the scrip cap: refuse before it buys anything when that job cannot make them.
         if (levels.Jobs[(int)chosen] is { } job && levels.JobNames[(int)chosen] is { } jobName &&
             job.Refuses(SatisfierMakes.Items(chosen, c.Remaining[(int)chosen], usable, viaQuestionable)))
             throw new ToolException($"{DeliveryLevelText.CannotMake(chosen, item, c.Name, jobName, job)} Nothing was bought or made. Raise {jobName} " +
                                     $"to level {job.MinLevel}, choose another job in Satisfier's settings (Job choice), or deliver another kind.");
+        if (plan.LeftToPlayer && !RankUpMemory.Remembers(memory, c.Name)) JobManager.Instance?.SetStepMemory(DeliverTool, RankUpMemory.Remember(c.Name, c.Rank));
+        IDisposable? limit = null;
         var rankedUp = false;
         var lastLeft = c.DeliveriesLeft;
         var progressAt = DateTime.UtcNow;
@@ -376,41 +424,54 @@ internal static class CustomDeliveryTools
                 }).ConfigureAwait(false);
                 await Task.Delay(500, ct).ConfigureAwait(false);
             }
-            if (viaQuestionable)
+            if (plan.SkipSatisfier)
+                statuses.Add($"You are at {c.Name} with {item} in your bags, and the rank-up delivery is the first: Satisfier is left out.");
+            else if (viaQuestionable)
             {
                 await Game.Run(() =>
                 {
                     var request = SatisfierBridge.GatherRequest(c);
-                    if (!QuestionableTools.StartDeliveryGathering(request.TurnInId, request.ItemId, request.ClassJob, planned, request.Collectability))
+                    if (!QuestionableTools.StartDeliveryGathering(request.TurnInId, request.ItemId, request.ClassJob, toTurnIn, request.Collectability))
                         throw new ToolException($"Questionable didn't take the turn-in of {item} for {c.Name}.");
                     return true;
                 }).ConfigureAwait(false);
-                statuses.Add($"Turning in {planned}x {item} with Questionable (Satisfier's own turn-in fails for some clients).");
+                statuses.Add($"Turning in {toTurnIn}x {item} with Questionable (Satisfier's own turn-in fails for some clients).");
             }
             else
-                await Game.Run(() => { SatisfierBridge.Start(c, chosen); return true; }).ConfigureAwait(false);
-            await Task.Delay(1000, ct).ConfigureAwait(false);
+                await Game.Run(() =>
+                {
+                    SatisfierBridge.Start(c, chosen);
+                    // Satisfier turns in all a request still takes, the rank-up one too: it gets the client with only the deliveries
+                    // before it left, so its turn-in ends there by itself, at the client, with every item made.
+                    if (plan.LeftToPlayer) limit = SatisfierBridge.LimitTurnIns(c, toTurnIn, levels.SatisfactionPerDelivery);
+                    return true;
+                }).ConfigureAwait(false);
+            if (!plan.SkipSatisfier) await Task.Delay(1000, ct).ConfigureAwait(false);
             var deadline = DateTime.UtcNow.AddHours(2);
-            while (await Game.Run(Busy).ConfigureAwait(false))
+            while (!plan.SkipSatisfier && await Game.Run(Busy).ConfigureAwait(false))
             {
                 if (DateTime.UtcNow > deadline) throw new ToolException($"The delivery is still running after two hours ({statuses.LastOrDefault()}).");
-                // A rank-up shows its rewards in a window that waits for Accept; Satisfier doesn't press it.
-                if (await Game.Run(AcceptRankUp).ConfigureAwait(false)) statuses.Add("Accepted the rank-up rewards.");
+                // A rank-up shows its rewards in a window that waits for Accept; Satisfier doesn't press it. Left to the player, the
+                // window is theirs.
+                if (!plan.LeftToPlayer && await Game.Run(AcceptRankUp).ConfigureAwait(false)) statuses.Add("Accepted the rank-up rewards.");
                 var status = await Game.Run(() => SatisfierBridge.Status).ConfigureAwait(false);
                 if (status.Length > 0 && statuses.LastOrDefault() != status)
                 {
                     statuses.Add(status);
-                    JobManager.Instance?.StepProgress("deliver_custom_delivery", status);
+                    JobManager.Instance?.StepProgress(DeliverTool, status);
                 }
                 // Done once the planned deliveries are in. A rank-up brings new requests, which Satisfier would wait for in the
-                // turn-in window without the items: stop it there too.
+                // turn-in window without the items: stop it there too. With a rank-up left to the player Satisfier runs to its end,
+                // closing the client's windows itself.
                 var now = await Game.Run(() => Find(c.Name)).ConfigureAwait(false);
                 if (now.DeliveriesLeft != lastLeft) { lastLeft = now.DeliveriesLeft; progressAt = DateTime.UtcNow; }
                 // Checked before the conversation: the client's cutscene after the last turn-in still holds the character then.
                 rankedUp = now.Rank != c.Rank;
-                if (c.DeliveriesLeft - now.DeliveriesLeft >= planned || rankedUp)
+                if (plan.Done(c.DeliveriesLeft - now.DeliveriesLeft, rankedUp))
                 {
                     await Game.Run(StopAll).ConfigureAwait(false);
+                    // A story left to the player is theirs, also when the rank-up came early: PlayerRanksUp waits it out.
+                    if (plan.LeftToPlayer) break;
                     var freed = await FinishConversation(ct).ConfigureAwait(false);
                     if (freed.Actions.Count > 0) statuses.Add($"After the turn-in: {string.Join(" ", freed.Actions)}");
                     if (freed.Problem is { } problem) statuses.Add($"The character is still held after the turn-in: {problem}");
@@ -422,7 +483,7 @@ internal static class CustomDeliveryTools
                 // open, and the game then counts the player as busy; a turn-in window can also load hidden, or vanish while the game
                 // still holds the conversation. Get free unless someone is turning in: Satisfier ("Turning in"), or Questionable,
                 // which turns in what it gathered itself once all of it is gathered. When turning in stalls, it is stuck.
-                var stillNeeded = planned - (c.DeliveriesLeft - now.DeliveriesLeft);
+                var stillNeeded = toTurnIn - (c.DeliveriesLeft - now.DeliveriesLeft);
                 var (inConversation, questionableTurningIn) = await Game.Run(() =>
                     (RetainerUi.Ready("SatisfactionSupply") || RetainerUi.Ready("SelectString") || Recovery.OrphanedEvent,
                      TurnInWatch.QuestionableTurningIn(QuestionableTools.Running, Items.CountInBags(c.Items[(int)chosen]), stillNeeded))).ConfigureAwait(false);
@@ -449,7 +510,7 @@ internal static class CustomDeliveryTools
                     statuses.Add($"The game asked a question during the turn-in, which nothing answers: stopped it. {string.Join(" ", freed.Actions)}".TrimEnd());
                     break;
                 }
-                else if (turnIn.Stalled(turningIn, progressAt, DateTime.UtcNow))
+                else if (turnIn.Stalled(turningIn && plan.WatchStall, progressAt, DateTime.UtcNow))
                 {
                     await Game.Run(StopAll).ConfigureAwait(false);
                     var freed = await Recovery.Run(ct).ConfigureAwait(false);
@@ -457,6 +518,12 @@ internal static class CustomDeliveryTools
                     break;
                 }
                 await Task.Delay(1000, ct).ConfigureAwait(false);
+            }
+            if (plan.LeftToPlayer)
+            {
+                // Satisfier is done: its count goes back, and its window closes so it does not cover the client's story.
+                await Game.Run(() => { limit?.Dispose(); window.Dispose(); return true; }).ConfigureAwait(false);
+                rankedUp = await PlayerRanksUp(c, levels, chosen, item, toTurnIn, statuses, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -466,7 +533,7 @@ internal static class CustomDeliveryTools
         }
         finally
         {
-            await Game.Run(() => { window.Dispose(); return true; }).ConfigureAwait(false);
+            await Game.Run(() => { limit?.Dispose(); window.Dispose(); return true; }).ConfigureAwait(false);
         }
 
         // What went in: the client's deliveries left this week (Satisfier's per-request count starts over after a rank-up).
@@ -488,6 +555,91 @@ internal static class CustomDeliveryTools
             steps = statuses,
         };
     }
+
+    private const string DeliverTool = "deliver_custom_delivery";
+
+    /// <summary>
+    /// The rank-up delivery, left to the player: once the deliveries before it are in and its item is in the bags, asks the player in
+    /// game to hand it in and waits until the client's rank changes (or the delivery goes in short of it), then until the player is out
+    /// of the client's story. Never clicks or recovers anything in a conversation the player started meanwhile, also when the step is
+    /// stopped or fails (<see cref="JobManager.PlayerInConversation"/>); see <see cref="HandInWait"/> and <see cref="StoryWait"/> for
+    /// when it gives up. Returns true once the client ranked up.
+    /// </summary>
+    private static async Task<bool> PlayerRanksUp(SatisfierBridge.Client c, SatisfierBridge.RequestData levels, DeliveryKind kind, string item, int before,
+                                                  List<string> statuses, CancellationToken ct)
+    {
+        var (now, have) = await Game.Run(() => (Find(c.Name), c.InBags(levels, kind))).ConfigureAwait(false);
+        var delivered = c.DeliveriesLeft - now.DeliveriesLeft;
+        if (now.Rank == c.Rank && (delivered < before || have == 0))
+            throw new ToolException($"Satisfier stopped before the rank-up delivery to {c.Name} was ready (" +
+                                    (before > 0 ? $"{delivered} of the {before} before it are in, " : "") +
+                                    $"{have} {item} in the bags). Its last step: {statuses.LastOrDefault() ?? "none"}.");
+        var askedPlayer = now.Rank == c.Rank;
+        var outcome = askedPlayer ? HandIn.Wait : HandIn.RankedUp;
+        if (askedPlayer)
+        {
+            ct.ThrowIfCancellationRequested();
+            PlayerGuide.Ask(PlayerRankUp.Ask(item, c.Name));
+            statuses.Add($"The rank-up delivery is left to you ({before} delivered before it): asked you in game to hand in {item}.");
+            JobManager.Instance?.StepProgress(DeliverTool, $"Waiting for you to hand in {item} to {c.Name}.");
+            var wait = new HandInWait(DateTime.UtcNow, now.DeliveriesLeft);
+            try
+            {
+                while (outcome == HandIn.Wait)
+                {
+                    var (client, inConversation) = await Game.Run(() => (Find(c.Name), InConversation())).ConfigureAwait(false);
+                    outcome = wait.Poll(DateTime.UtcNow, inConversation, client.Rank != c.Rank, client.DeliveriesLeft);
+                    // Only a conversation the player started is theirs: one held from before (a menu left open) recovery may close.
+                    JobManager.Instance?.PlayerInConversation(DeliverTool, wait.PlayersConversation || outcome is HandIn.RankedUp or HandIn.WentInShort);
+                    if (outcome is HandIn.TimedOut or HandIn.TimedOutInConversation)
+                    {
+                        var stillHave = await Game.Run(() => c.InBags(levels, kind)).ConfigureAwait(false) > 0;
+                        throw new ToolException(PlayerRankUp.TimedOut(item, c.Name, stillHave, outcome == HandIn.TimedOutInConversation));
+                    }
+                    if (outcome == HandIn.Wait) await Task.Delay(2000, ct).ConfigureAwait(false);
+                }
+            }
+            finally { PlayerGuide.Done(); }
+        }
+
+        // The client's story goes on after the delivery: the next step must not find the player in it.
+        JobManager.Instance?.PlayerInConversation(DeliverTool, true);
+        var story = new StoryWait(DateTime.UtcNow);
+        while (true)
+        {
+            var (inConversation, heldWithoutWindow) = await Game.Run(() =>
+                (InConversation(), Recovery.OrphanedEvent && !InCutscene() && !StoryWindows.Any(RetainerUi.Ready))).ConfigureAwait(false);
+            switch (story.Poll(DateTime.UtcNow, inConversation, heldWithoutWindow))
+            {
+                case StoryEnd.Over:
+                    JobManager.Instance?.PlayerInConversation(DeliverTool, false);
+                    var rank = (await Game.Run(() => Find(c.Name)).ConfigureAwait(false)).Rank;
+                    statuses.Add(outcome == HandIn.WentInShort ? PlayerRankUp.WentInShort(item, c.Name)
+                                 : askedPlayer ? $"You handed in {item}: {c.Name} reached rank {rank}."
+                                 : $"{c.Name} reached rank {rank}, and you are out of the story.");
+                    return outcome == HandIn.RankedUp;
+                case StoryEnd.TooLong:
+                    throw new ToolException(PlayerRankUp.StillInStory(c.Name));
+                case StoryEnd.HeldWithoutWindow:
+                    throw new ToolException(PlayerRankUp.HeldWithoutWindow(c.Name));
+            }
+            await Task.Delay(2000, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Windows a client's story can show that are not on recovery's list of conversation windows (it only sees them while focused): a
+    /// quest the client offers, a quest it completes. While one is open the character is not held without a window.
+    /// </summary>
+    private static readonly string[] StoryWindows = ["JournalAccept", "JournalResult"];
+
+    private static bool InCutscene() =>
+        Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedInCutSceneEvent] ||
+        Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.WatchingCutscene] ||
+        Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.WatchingCutscene78];
+
+    /// <summary>The character is in a conversation, a cutscene or the rank-up rewards window. Framework thread.</summary>
+    private static bool InConversation() => Recovery.Occupied || RetainerUi.Ready("SatisfactionSupplyResult") || InCutscene();
 
     /// <summary>Presses Accept on the rank-up rewards window (SatisfactionSupplyResult) when it is open.</summary>
     private static unsafe bool AcceptRankUp()

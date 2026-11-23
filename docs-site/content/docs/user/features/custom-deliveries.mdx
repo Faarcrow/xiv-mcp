@@ -59,13 +59,29 @@ The plan:
 - **Per client: the bonus request, then crafting, gathering for the rest.** A request stops where the scrip cap would be passed (the cap counts every delivery in the plan), or where it takes fewer deliveries than the client still does (Tiisol Ja at rank 4 takes three of each). The next kind then takes the client's remaining deliveries.
 - **A request the job cannot make is left out** (see [Levels](#levels)), and the next kind takes its place. `leftOutForLevel` names the requests the plan would otherwise have delivered, and why.
 
-The plan shows per client whether it ranks up, whether the request has the bonus, and the deliveries its achievements still need (`achievementDeliveriesLeft`).
+The plan shows per client whether it is still below its top rank (`ranksUp`), which of its deliveries reaches the next rank (`rankUpDelivery`, none when the planned ones fall short), whether the request has the bonus, and the deliveries its achievements still need (`achievementDeliveriesLeft`).
 
-A cutscene after a turn-in (a rank-up, the week's last delivery) is waited out, the client's dialogue after it is clicked through, and the rank-up rewards window it ends in is accepted, so the character is free when the delivery is done; only a cutscene that keeps the character for over three minutes stops the delivery. After a gathering delivery Questionable is stopped, so it doesn't go on to the client's new sidequest by itself.
+A cutscene after a turn-in (a rank-up, the week's last delivery) is waited out, the client's dialogue after it is clicked through, and the rank-up rewards window it ends in is accepted, so the character is free when the delivery is done; only a cutscene that keeps the character for over three minutes stops the delivery. To watch a rank-up story yourself, see [Watching a rank-up](#watching-a-rank-up). After a gathering delivery Questionable is stopped, so it does not go on to the client's new sidequest by itself.
 
 While a delivery runs, Satisfier's window stays open: Satisfier keeps its client data up to date while it is shown.
 
 While a delivery runs, **YesAlready** is paused (TextAdvance is not). Its "Custom Deliveries" option turns items in the moment a delivery window loads, even while the window is still hidden behind a client's dialogue, as with Tiisol Ja. The conversation then runs ahead without the window, Satisfier waits for a window that never shows, and anything that touches the hidden window can crash the game. YesAlready resumes as soon as the delivery is done.
+
+## Watching a rank-up
+
+Satisfier hands in every delivery itself, also the one that ranks a client up, and the client's story after it is clicked through. To watch that story, ask your assistant to leave the rank-up to you (`player_ranks_up`, off unless you ask for it):
+
+- The deliveries before the rank-up go in as usual, always with Satisfier. For a gathering request whose items are already in your bags, XIV MCP otherwise has Questionable turn them in, but Questionable would hand in the rank-up item too. Satisfier's own turn-in does not work for every client (Tiisol Ja), so such a delivery can fail with this option on.
+- For the rank-up delivery, the item is still made and your character is taken to the client. Satisfier closes the client's menu after the deliveries before it. Then XIV MCP tells you in chat and with a notification to hand it in yourself.
+- XIV MCP waits until the client's rank goes up and you are out of the story. It clicks nothing and closes nothing in a conversation you start, also when the job is paused or cancelled then, or the delivery fails.
+- If your hand-in goes in but the client does not reach the next rank (an item below the client's top collectability tier gives less satisfaction), the delivery ends and says so.
+- After 30 minutes without a hand-in it stops waiting. In a conversation you started after being asked, it waits up to 2 hours. Running the delivery again makes the item again if it is gone, takes you back to the client first, then asks again. Running it again after the client ranked up does nothing.
+- When the story still holds your character 10 minutes after the hand-in, or the game holds it with no window left for a minute, XIV MCP stops waiting and says so. The delivery is done then.
+- A rank-up only counts when it fits in this week's deliveries left. When there are fewer left than the client needs, nothing is left to you.
+
+The weekly job does this for every client that ranks up. After each rank-up it plans the rest of the week again, as the client has new requests then. While the job waits for you, your assistant's other actions in the game are refused, as during any job step. If TextAdvance is on, it still moves the story on by itself.
+
+To have Satisfier stop before the rank-up delivery, XIV MCP lowers Satisfier's count of the deliveries that client takes this week while it runs. Satisfier then makes every item, walks to the client and turns in only the deliveries before the rank-up. `get_custom_deliveries` still shows the real numbers meanwhile. The count is put back as soon as Satisfier is done, and when XIV MCP is turned off or updated; a Satisfier still running then is stopped first. When the rank-up is the first delivery, the item is in your bags and your character stands at the client (or the client's delivery window is open), Satisfier is not started at all.
 
 ## Scrip caps
 
