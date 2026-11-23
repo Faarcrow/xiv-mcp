@@ -127,6 +127,13 @@ public sealed class CraftListProgress
         return head + (GearIngredients.Note(current.GearIngredients)
                        ?? "Likely causes: an ingredient it can't select in the crafting log, missing materials (or the wrong HQ/NQ ones), or a window in the way.");
     }
+
+    /// <summary>For a job step's error: running the step again does not make the crafts already done once more. Empty when none are done.</summary>
+    public string RunAgainNote()
+    {
+        var done = Done().Values.Sum();
+        return done == 0 ? "" : $" {done} craft(s) are done; running this job step again (retry / resume) continues with the rest instead of crafting them again.";
+    }
 }
 
 /// <summary>Recipes that use equipment (an item with an equip slot) as an ingredient: Artisan can't select those in the crafting log.</summary>

@@ -262,7 +262,7 @@ internal static class LongRunningTools
                   "type": "object",
                   "properties": {
                     "list": { "type": "string", "description": "Artisan list id or name." },
-                    "timeout_minutes": { "type": "integer", "description": "Give up after this long (default 600)." },
+                    "timeout_minutes": { "type": "integer", "description": "Stop Artisan and fail after this long (default 600)." },
                     "stall_minutes": { "type": "integer", "description": "Stop and fail when Artisan is busy but nothing is crafted (no bag count changes) for this long (default 5; 0 = never)." }
                   },
                   "required": ["list"]
@@ -275,12 +275,7 @@ internal static class LongRunningTools
                 var listArg = args.String("list") ?? throw new ToolException("'list' is required.");
                 var timeout = TimeSpan.FromMinutes(args.Int("timeout_minutes", 600, 1, 24 * 60));
                 var stallAfter = TimeSpan.FromMinutes(args.Int("stall_minutes", 5, 0, 120));
-                // Crafting is refused while a gathering node is open (e.g. right after a gather_until step).
-                await LeaveGatheringNode(ct).ConfigureAwait(false);
-                // Right after a fight (a farm_monster_drops step) the game refuses the job change Artisan needs ("unable to change
-                // classes or jobs at this time"), and Artisan then pauses its list for good: wait for the combat flag to clear.
-                for (var i = 0; i < 90 && await Game.Run(() => Svc.Condition[ConditionFlag.InCombat]).ConfigureAwait(false); i++)
-                    await Task.Delay(1000, ct).ConfigureAwait(false);
+                await ReadyToCraft(ct).ConfigureAwait(false);
                 var (listId, listName, current) = await Game.RunLoggedIn(() =>
                 {
                     CraftGatherTools.RequireArtisan();
@@ -338,20 +333,6 @@ internal static class LongRunningTools
                     saved = done;
                     JobManager.Instance?.SetStepMemory(tool, new CraftListMemory(plan.Id, resume.Original, written, done).ToJson());
                 }
-                async Task Settle()
-                {
-                    // A craft that was in progress when Artisan stopped may still deliver its product, sometimes well after the
-                    // stop (its last actions still play out). Counting before it lands made the next run craft it a second time.
-                    await Task.Delay(3000, CancellationToken.None).ConfigureAwait(false);
-                    for (var i = 0; i < 90 && await Game.Run(() => Svc.Condition[ConditionFlag.Crafting]).ConfigureAwait(false); i++)
-                    {
-                        await Task.Delay(1000, CancellationToken.None).ConfigureAwait(false);
-                        progress.Observe(await Game.Run(Counts).ConfigureAwait(false), DateTime.UtcNow);
-                    }
-                    await Task.Delay(1500, CancellationToken.None).ConfigureAwait(false);
-                    progress.Observe(await Game.Run(Counts).ConfigureAwait(false), DateTime.UtcNow);
-                    Remember();
-                }
                 Remember(force: true);
 
                 if (resume.AllDone)
@@ -360,59 +341,8 @@ internal static class LongRunningTools
                                  note = (string?)"Every craft of this list was already made by an earlier run of this step." };
 
                 await Game.Run(() => { Svc.PluginInterface.GetIpcSubscriber<int, object>("Artisan.StartListById").InvokeAction(plan.Id); return true; }).ConfigureAwait(false);
-                try
-                {
-                    var sawRunning = false;
-                    for (var tick = 1; ; tick++)
-                    {
-                        // Counts every second, so a product made just before the next craft uses it up is still seen.
-                        await Task.Delay(1000, ct).ConfigureAwait(false);
-                        var counts = await Game.Run(Counts).ConfigureAwait(false);
-                        progress.Observe(counts, DateTime.UtcNow);
-                        Remember();
-                        if (tick % 5 != 0) continue;
-                        var (running, paused, solving) = await Game.Run(() => (
-                            CraftGatherTools.Ipc("Artisan.IsListRunning") == true || CraftGatherTools.Ipc("Artisan.IsBusy") == true,
-                            CraftGatherTools.Ipc("Artisan.IsListPaused") == true,
-                            RaphaelBusy())).ConfigureAwait(false);
-                        var now = DateTime.UtcNow;
-                        if (running) { sawRunning = true; }
-                        else if (sawRunning || now - started > TimeSpan.FromSeconds(30)) break;
-                        // A paused list or a solver still working isn't stuck, unless the solver works far too long without a craft.
-                        if (paused) progress.Touch(now);
-                        // A retainer plugin can open the retainer list right after a bell step; Artisan then waits forever.
-                        if (await Game.Run(() => Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.OccupiedSummoningBell]).ConfigureAwait(false))
-                        {
-                            var freed = await Recovery.Run(ct).ConfigureAwait(false);
-                            if (freed.Actions.Count > 0) JobManager.Instance?.StepProgress("run_crafting_list", $"recovery: {string.Join(" ", freed.Actions)}");
-                            progress.Touch(DateTime.UtcNow);
-                        }
-                        progress.SolverBusy(solving, now);
-                        if (running && progress.SolverHung(now, SolverLimit))
-                        {
-                            await Game.Run(() => { CraftGatherTools.StopArtisan(); return true; }).ConfigureAwait(false);
-                            await Settle().ConfigureAwait(false);
-                            throw new ToolException(progress.SolverHungMessage(plan.Name, SolverLimit) + Continues(progress));
-                        }
-                        if (running && progress.Stalled(now, stallAfter))
-                        {
-                            var idle = progress.Idle(now);
-                            await Game.Run(() => { CraftGatherTools.StopArtisan(); return true; }).ConfigureAwait(false);
-                            await Settle().ConfigureAwait(false);
-                            throw new ToolException(progress.StallMessage(plan.Name, idle) + Continues(progress));
-                        }
-                        if (now - started > timeout) throw new ToolException("Timed out while Artisan was still crafting." + Continues(progress));
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    await Game.Run(() => { CraftGatherTools.StopArtisan(); return true; }).ConfigureAwait(false);
-                    await Settle().ConfigureAwait(false);
-                    throw;
-                }
+                await FollowArtisan(tool, plan.Name, progress, new CraftRunWatch(progress, started, stallAfter, timeout), Counts, () => Remember(), ct).ConfigureAwait(false);
 
-                progress.Observe(await Game.Run(Counts).ConfigureAwait(false), DateTime.UtcNow);
-                Remember();
                 if (!progress.MadeProgressThisRun && !progress.Finished)
                     throw new ToolException($"Artisan stopped without crafting anything from '{plan.Name}' (stopped at {progress.Current!.Item}: missing materials, wrong job or gear?)." +
                                             (GearIngredients.Note(progress.Current.GearIngredients) is { } manual ? " " + manual : ""));
@@ -422,7 +352,7 @@ internal static class LongRunningTools
                     var free = await Game.Run(Items.FreeBagSlots).ConfigureAwait(false);
                     throw new ToolException($"Artisan stopped early on '{plan.Name}', at {progress.Current!.Item}: not every craft was made" +
                                             (free == 0 ? " (the bags are full: free some slots first)." : " (missing materials, wrong job or gear?).") +
-                                            Continues(progress));
+                                            progress.RunAgainNote());
                 }
                 var restored = !written.SequenceEqual(resume.Original) ? await RestoreList(plan.Id, resume.Original).ConfigureAwait(false) : null;
                 return new { list = plan.Name, minutes = Math.Round((DateTime.UtcNow - started).TotalMinutes, 1), crafted = Report(plan.Entries, progress),
@@ -466,16 +396,117 @@ internal static class LongRunningTools
     private static string Missing(List<KeyValuePair<uint, int>> missing, Dictionary<uint, int> have) =>
         string.Join(", ", missing.Select(m => $"{m.Value - have[m.Key]}x {Items.Name(m.Key)}"));
 
-    private static object Report(List<ListRecipe> entries, CraftListProgress progress) => entries.Select(e => new
+    private static object Report(List<ListRecipe> entries, CraftListProgress progress) => entries.Select(e => Report(e, progress)).ToList();
+
+    internal static object Report(ListRecipe e, CraftListProgress progress) => new
     {
         item = e.Item, recipeId = e.RecipeId, crafts = e.Crafts, craftsDone = progress.CraftsDone(e.RecipeId),
         expected = e.Crafts * e.Yield, made = progress.ItemsMade(e.RecipeId),
-    }).ToList();
+    };
 
-    private static string Continues(CraftListProgress progress)
+    /// <summary>
+    /// Gets the character ready for Artisan. Crafting is refused while a gathering node is open (e.g. right after a gather_until
+    /// step), so the node is left. Right after a fight (a farm_monster_drops step) the game refuses the job change Artisan needs
+    /// ("unable to change classes or jobs at this time"), and Artisan then pauses its list for good, so this waits (up to 90 s) for
+    /// the combat flag to clear.
+    /// </summary>
+    internal static async Task ReadyToCraft(CancellationToken ct)
     {
-        var done = progress.Done().Values.Sum();
-        return done == 0 ? "" : $" {done} craft(s) are done; running this job step again (retry / resume) continues with the rest instead of crafting them again.";
+        await LeaveGatheringNode(ct).ConfigureAwait(false);
+        for (var i = 0; i < 90 && await Game.Run(() => Svc.Condition[ConditionFlag.InCombat]).ConfigureAwait(false); i++)
+            await Task.Delay(1000, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Follows Artisan while it crafts (a list, or craft_item's crafts of one item) until it is done, or until a direct call has to
+    /// answer (<see cref="CraftRunCheck.Answer"/>: Artisan keeps crafting). Counts the bags every second, so a product made just
+    /// before the next craft uses it up is still seen, and checks Artisan every 5 seconds and at a direct call's deadline. A
+    /// retainer list that a retainer plugin opens meanwhile is closed. Once Artisan is done, it waits a moment for the crafting log
+    /// to close (not cut short by a pause: the step is done by then). A stuck run, a hung solver, the time limit and cancelling
+    /// stop Artisan and let a craft in progress land; all but cancelling then fail.
+    /// </summary>
+    /// <param name="name">What is crafted, for the error messages: the list's name or the item.</param>
+    /// <param name="remember">Saves the progress as the job step's memory; called after every count.</param>
+    internal static async Task<CraftRunCheck> FollowArtisan(string tool, string name, CraftListProgress progress, CraftRunWatch watch,
+                                                           Func<Dictionary<uint, int>> counts, System.Action remember, CancellationToken ct)
+    {
+        async Task Stop()
+        {
+            await Game.Run(() => { CraftGatherTools.StopArtisan(); return true; }).ConfigureAwait(false);
+            await Settle(progress, counts, remember).ConfigureAwait(false);
+        }
+        try
+        {
+            for (var tick = 1; ; tick++)
+            {
+                await Task.Delay(1000, ct).ConfigureAwait(false);
+                progress.Observe(await Game.Run(counts).ConfigureAwait(false), DateTime.UtcNow);
+                remember();
+                if (tick % 5 != 0 && !watch.AnswerDue(DateTime.UtcNow)) continue;
+                // A retainer plugin can open the retainer list right after a bell step; Artisan then waits forever.
+                if (await Game.Run(() => Svc.Condition[ConditionFlag.OccupiedSummoningBell]).ConfigureAwait(false))
+                {
+                    var freed = await Recovery.Run(ct).ConfigureAwait(false);
+                    if (freed.Actions.Count > 0) JobManager.Instance?.StepProgress(tool, $"recovery: {string.Join(" ", freed.Actions)}");
+                    progress.Touch(DateTime.UtcNow);
+                }
+                var (running, paused, solving) = await Game.Run(() => (
+                    CraftGatherTools.Ipc("Artisan.IsListRunning") == true || CraftGatherTools.Ipc("Artisan.IsBusy") == true,
+                    CraftGatherTools.Ipc("Artisan.IsListPaused") == true,
+                    RaphaelBusy())).ConfigureAwait(false);
+                var now = DateTime.UtcNow;
+                switch (watch.Check(now, running, paused, solving))
+                {
+                    case CraftRunCheck.Wait:
+                        continue;
+                    case CraftRunCheck.Answer:
+                        return CraftRunCheck.Answer;
+                    case CraftRunCheck.Ended:
+                        // Artisan closes the crafting log after its last craft (by default); until then the next step finds the character crafting.
+                        var logClosedBy = watch.LogWaitEnds(now);
+                        while (DateTime.UtcNow < logClosedBy && await Game.Run(() => Svc.Condition[ConditionFlag.Crafting]).ConfigureAwait(false))
+                        {
+                            await Task.Delay(1000, CancellationToken.None).ConfigureAwait(false);
+                            progress.Observe(await Game.Run(counts).ConfigureAwait(false), DateTime.UtcNow);
+                        }
+                        progress.Observe(await Game.Run(counts).ConfigureAwait(false), DateTime.UtcNow);
+                        remember();
+                        return CraftRunCheck.Ended;
+                    case CraftRunCheck.SolverHung:
+                        await Stop().ConfigureAwait(false);
+                        throw new ToolException(progress.SolverHungMessage(name, CraftRunWatch.SolverLimit) + progress.RunAgainNote());
+                    case CraftRunCheck.Stalled:
+                        var idle = progress.Idle(now);
+                        await Stop().ConfigureAwait(false);
+                        throw new ToolException(progress.StallMessage(name, idle) + progress.RunAgainNote());
+                    default:
+                        await Stop().ConfigureAwait(false);
+                        throw new ToolException("Timed out while Artisan was still crafting, so it was stopped." + progress.RunAgainNote());
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            await Stop().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// After Artisan was stopped: a craft that was in progress may still deliver its product, sometimes well after the stop (its
+    /// last actions still play out). Counting before it lands made the next run craft it a second time.
+    /// </summary>
+    private static async Task Settle(CraftListProgress progress, Func<Dictionary<uint, int>> counts, System.Action remember)
+    {
+        await Task.Delay(3000, CancellationToken.None).ConfigureAwait(false);
+        for (var i = 0; i < 90 && await Game.Run(() => Svc.Condition[ConditionFlag.Crafting]).ConfigureAwait(false); i++)
+        {
+            await Task.Delay(1000, CancellationToken.None).ConfigureAwait(false);
+            progress.Observe(await Game.Run(counts).ConfigureAwait(false), DateTime.UtcNow);
+        }
+        await Task.Delay(1500, CancellationToken.None).ConfigureAwait(false);
+        progress.Observe(await Game.Run(counts).ConfigureAwait(false), DateTime.UtcNow);
+        remember();
     }
 
     /// <summary>Puts the list's original quantities back after a resumed run shrank it and everything is crafted.</summary>
@@ -492,9 +523,6 @@ internal static class LongRunningTools
             return $"The Artisan list still holds only the crafts that were missing (restoring it failed: {ex.Message}).";
         }
     }
-
-    /// <summary>How long Raphael may work on one craft before run_crafting_list counts it as hung and stops Artisan.</summary>
-    private static readonly TimeSpan SolverLimit = TimeSpan.FromMinutes(3);
 
     /// <summary>Artisan's Raphael solver is building a solution (a craft waits for it). Framework thread.</summary>
     private static bool RaphaelBusy()

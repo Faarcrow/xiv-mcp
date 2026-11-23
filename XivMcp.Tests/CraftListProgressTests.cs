@@ -157,4 +157,14 @@ public class CraftListProgressTests
         Assert.Contains("Ingot", message);
         Assert.True(XivMcp.Jobs.StepRetry.ShouldRetry(message, attempts: 1));
     }
+
+    [Fact]
+    public void The_run_again_note_only_appears_once_crafts_are_done()
+    {
+        var p = new CraftListProgress([Ingot, Plate], Counts(12, 0, 0, 0), T0);
+        Assert.Equal("", p.RunAgainNote());
+        p.Observe(Counts(10, 1, 0, 0), T0.AddSeconds(30));
+        Assert.Contains("1 craft(s) are done", p.RunAgainNote());
+        Assert.Contains("running this job step again", p.RunAgainNote());
+    }
 }
