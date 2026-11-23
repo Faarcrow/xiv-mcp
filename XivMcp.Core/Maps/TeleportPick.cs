@@ -37,3 +37,30 @@ public static class TeleportPick
     /// <summary>The zone has aetherytes or shards, but the character has attuned to none of them.</summary>
     public static bool NoneAttuned(IReadOnlyList<TeleportOption> options) => options.Count > 0 && !options.Any(o => o.Attuned);
 }
+
+/// <summary>A zone with aetherytes or shards of one aethernet group: its territory, intended use, and whether the group's main aetheryte stands there.</summary>
+public readonly record struct AethernetZone(uint Territory, uint IntendedUse, bool HasMain);
+
+/// <summary>Whether the character can travel to an aetheryte or aethernet shard.</summary>
+public static class AetheryteAccess
+{
+    /// <summary>
+    /// The zones of an aethernet group that are its city: those of the same kind (intended use) as the main aetheryte's zone, such as
+    /// both Gridanias or the Gold Saucer and Chocobo Square. Most groups also have destinations in field zones (the city gates, Radz-at-Han's
+    /// The Gate of First Sight in Thavnair, Gangos); being in such a zone is not being in the city.
+    /// </summary>
+    public static IReadOnlySet<uint> CityZones(IEnumerable<AethernetZone> zones)
+    {
+        var list = zones.ToList();
+        var main = list.Where(z => z.HasMain).Select(z => (uint?)z.IntendedUse).FirstOrDefault();
+        return list.Where(z => main is null ? z.HasMain : z.IntendedUse == main).Select(z => z.Territory).ToHashSet();
+    }
+
+    /// <summary>
+    /// An aetheryte: once attuned. An aethernet shard: once attuned, and from outside its city only when the city's own aetheryte is
+    /// attuned too, since getting there means teleporting to that aetheryte first and taking the aethernet from it.
+    /// </summary>
+    /// <param name="inCity">The player is in one of the city zones of the shard's aethernet group (see <see cref="CityZones"/>).</param>
+    public static bool Usable(bool isAetheryte, bool attuned, bool cityAttuned, bool inCity) =>
+        attuned && (isAetheryte || inCity || cityAttuned);
+}

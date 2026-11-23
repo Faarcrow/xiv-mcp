@@ -129,3 +129,33 @@ public class TeleportAttunedTests
         Assert.Null(TeleportPick.Choose([Hamlet], playerToTarget: 300, retry: false, tried: []));
     }
 }
+
+public class AetheryteAccessTests
+{
+    [Fact]
+    public void A_shard_in_another_city_needs_that_city_s_aetheryte_too()
+    {
+        // Regression (in game): from Thavnair, travel chose the Hall of the Radiant Host shard in Radz-at-Han, which the character had
+        // touched, but Radz-at-Han's own aetheryte was not attuned, so Lifestream could not get there ("did not leave the zone").
+        Assert.False(AetheryteAccess.Usable(isAetheryte: false, attuned: true, cityAttuned: false, inCity: false));
+        Assert.True(AetheryteAccess.Usable(isAetheryte: false, attuned: true, cityAttuned: true, inCity: false));
+        Assert.True(AetheryteAccess.Usable(isAetheryte: false, attuned: true, cityAttuned: false, inCity: true));
+        Assert.False(AetheryteAccess.Usable(isAetheryte: false, attuned: false, cityAttuned: true, inCity: true));
+        Assert.True(AetheryteAccess.Usable(isAetheryte: true, attuned: true, cityAttuned: false, inCity: false));
+        Assert.False(AetheryteAccess.Usable(isAetheryte: true, attuned: false, cityAttuned: true, inCity: true));
+    }
+
+    [Fact]
+    public void A_gateway_shard_in_the_field_does_not_make_its_zone_part_of_the_city()
+    {
+        // Radz-at-Han's aethernet group: the city (963, town) and The Gate of First Sight in Thavnair (957, field). Regression: standing
+        // in Thavnair counted as being in the city, so a city shard was planned without Radz-at-Han's aetheryte.
+        var radz = new[] { new AethernetZone(963, IntendedUse: 0, HasMain: true), new AethernetZone(957, IntendedUse: 1, HasMain: false) };
+        Assert.Equal([963u], AetheryteAccess.CityZones(radz));
+        // Gridania: both cities count, the Shroud gates do not.
+        var gridania = new[] { new AethernetZone(132, 0, true), new AethernetZone(133, 0, false), new AethernetZone(148, 1, false), new AethernetZone(154, 1, false) };
+        Assert.Equal([132u, 133u], AetheryteAccess.CityZones(gridania).Order());
+        // The Gold Saucer and Chocobo Square share their own intended use.
+        Assert.Equal(2, AetheryteAccess.CityZones([new(144, 23, true), new(388, 23, false)]).Count);
+    }
+}
