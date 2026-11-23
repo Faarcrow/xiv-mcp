@@ -26,6 +26,36 @@ public class JsonNumberTests
     }
 
     [Fact]
+    public void Numbers_put_in_from_code_are_read_whatever_their_type()
+    {
+        // Regression: a value set from code keeps its own type and reads back only as that type. A job step's memory holds recipe
+        // ids as uint, so a retry in the same session lost them and crafted everything again; only after a reload (memory read
+        // back from jobs.json as text) did it continue.
+        var o = new JsonObject { ["uint"] = 1008u, ["ushort"] = (ushort)7, ["byte"] = (byte)3, ["ulong"] = 5ul, ["float"] = 2.5f, ["decimal"] = 4.4m };
+        Assert.Equal(1008, JsonNumber.Int(o["uint"]));
+        Assert.Equal(7, JsonNumber.Int(o["ushort"]));
+        Assert.Equal(3, JsonNumber.Int(o["byte"]));
+        Assert.Equal(5, JsonNumber.Int(o["ulong"]));
+        Assert.Equal(3, JsonNumber.Int(o["float"]));
+        Assert.Equal(4, JsonNumber.Int(o["decimal"]));
+        Assert.Equal(int.MaxValue, JsonNumber.Int(new JsonObject { ["v"] = uint.MaxValue }["v"]));
+        Assert.Null(JsonNumber.Int(new JsonObject { ["v"] = true }["v"]));
+    }
+
+    [Theory]
+    [InlineData(double.NaN, null)]
+    [InlineData(double.PositiveInfinity, int.MaxValue)]
+    [InlineData(double.NegativeInfinity, int.MinValue)]
+    public void Not_a_number_is_null_and_infinities_are_clamped_whatever_their_type(double value, int? expected)
+    {
+        // A float or Half NaN or infinity calls itself a Number but has no JSON text, so it is read as its own type, not from its text.
+        var o = new JsonObject { ["double"] = value, ["float"] = (float)value, ["half"] = JsonValue.Create((Half)value) };
+        Assert.Equal(expected, JsonNumber.Int(o["double"]));
+        Assert.Equal(expected, JsonNumber.Int(o["float"]));
+        Assert.Equal(expected, JsonNumber.Int(o["half"]));
+    }
+
+    [Fact]
     public void Numbers_outside_the_int_range_are_clamped()
     {
         Assert.Equal(int.MaxValue, JsonNumber.Int(Value("3000000000")));

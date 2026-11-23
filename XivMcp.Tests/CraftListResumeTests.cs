@@ -66,6 +66,19 @@ public class CraftListResumeTests
     }
 
     [Fact]
+    public void Memory_is_read_back_as_the_job_step_keeps_it()
+    {
+        // The job keeps the step's memory as the JsonObject the step wrote (deep-cloned), not as parsed text: a retry in the same
+        // session reads it like that.
+        var memory = new CraftListMemory(7, List, List, new() { [100] = 6, [200] = 1 });
+        var copy = CraftListMemory.FromJson(memory.ToJson().DeepClone().AsObject());
+        Assert.NotNull(copy);
+        Assert.Equal(memory.Original, copy.Original);
+        Assert.Equal(memory.Written, copy.Written);
+        Assert.Equal([new RecipeCount(200, 2), new RecipeCount(300, 1)], CraftListResume.Plan(copy, 7, List).Shrink);
+    }
+
+    [Fact]
     public void Memory_survives_a_round_trip_through_json()
     {
         var memory = new CraftListMemory(7, List, [new(200, 2)], new() { [100] = 6, [200] = 1 });
