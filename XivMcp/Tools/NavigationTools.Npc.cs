@@ -101,8 +101,8 @@ internal static partial class NavigationTools
                                           ICollection<uint>? unreachable = null)
     {
         // Zones with their own aethernet that the Aetheryte sheet does not list (the Firmament, Cosmic Exploration, Eureka, Bozja, ...).
-        // The field operations among them (Eureka, Bozja, Zadnor, the Occult Crescent) are most likely duties, where EnsureCanTravel
-        // refuses before this runs.
+        // The field operations among them (Eureka, Bozja, Zadnor, the Occult Crescent) are duties (Eureka Anemos sets BoundByDuty and
+        // BoundByDuty56), where EnsureCanTravel refuses before this runs.
         var shards = await Task.Run(() => ShardNetworks.Of(spot.Territory), ct).ConfigureAwait(false);
         if (shards.Count > 0)
         {
