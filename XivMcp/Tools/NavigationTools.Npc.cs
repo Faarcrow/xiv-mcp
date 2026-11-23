@@ -51,24 +51,26 @@ internal static partial class NavigationTools
         // Map positions have no height: the nearest shard (or the spot the player stands at) can be on a level the NPC can't be
         // walked to from. Then travel once more, by another aetheryte or shard.
         var tried = new HashSet<uint>();
+        var unreachable = new HashSet<uint>();
         try
         {
-            return await GoToNpcOnce(spot, steps, retry: false, tried, ct).ConfigureAwait(false);
+            return await GoToNpcOnce(spot, steps, retry: false, tried, unreachable, ct).ConfigureAwait(false);
         }
         catch (ToolException ex) when (ex.Message.Contains("runs into an obstacle", StringComparison.Ordinal) ||
                                        ex.Message.StartsWith("vnavmesh could not find a path", StringComparison.Ordinal))
         {
             steps.Add($"{ex.Message} Travelling there by another aetheryte or shard.");
-            return await GoToNpcOnce(spot, steps, retry: true, tried, ct).ConfigureAwait(false);
+            return await GoToNpcOnce(spot, steps, retry: true, tried, unreachable, ct).ConfigureAwait(false);
         }
     }
 
-    private static async Task<object> GoToNpcOnce(NpcSpot spot, List<string> steps, bool retry, HashSet<uint> tried, CancellationToken ct)
+    private static async Task<object> GoToNpcOnce(NpcSpot spot, List<string> steps, bool retry, HashSet<uint> tried, HashSet<uint> unreachable,
+                                                  CancellationToken ct)
     {
         // Already close enough to see it?
         if (!retry && await WalkTo(spot.Name, o => o.BaseId == spot.NpcId, steps, ct).ConfigureAwait(false) is { } near) return near;
 
-        await TravelNear(spot, steps, ct, retry, tried).ConfigureAwait(false);
+        await TravelNear(spot, steps, ct, retry, tried, unreachable).ConfigureAwait(false);
 
         if (await WalkTo(spot.Name, o => o.BaseId == spot.NpcId, steps, ct).ConfigureAwait(false) is { } arrived) return arrived;
 
@@ -94,8 +96,28 @@ internal static partial class NavigationTools
     /// Gets into the zone of <paramref name="spot"/>, near it: with Lifestream by teleport or aethernet, otherwise by asking the player
     /// to teleport and waiting. Does nothing when walking from where the player is would be as quick.
     /// </summary>
-    internal static async Task TravelNear(NpcSpot spot, List<string> steps, CancellationToken ct, bool retry = false, ICollection<uint>? tried = null)
+    /// <param name="unreachable">In a zone with its own aethernet, the shards the player could not walk to, so a retry boards elsewhere.</param>
+    internal static async Task TravelNear(NpcSpot spot, List<string> steps, CancellationToken ct, bool retry = false, ICollection<uint>? tried = null,
+                                          ICollection<uint>? unreachable = null)
     {
+        // Zones with their own aethernet that the Aetheryte sheet does not list (the Firmament, Cosmic Exploration, Eureka, Bozja, ...).
+        // The field operations among them (Eureka, Bozja, Zadnor, the Occult Crescent) are most likely duties, where EnsureCanTravel
+        // refuses before this runs.
+        var shards = await Task.Run(() => ShardNetworks.Of(spot.Territory), ct).ConfigureAwait(false);
+        if (shards.Count > 0)
+        {
+            if (await Game.Run(() => Svc.ClientState.TerritoryType != spot.Territory).ConfigureAwait(false))
+            {
+                var entry = await Task.Run(() => ShardNetworks.Entry(spot.Territory), ct).ConfigureAwait(false)
+                            ?? throw new ToolException(await Task.Run(() => ShardNetworks.IsDuty(spot.Territory), ct).ConfigureAwait(false)
+                                ? $"{TerritoryName(spot.Territory)} is a duty: enter it through the game first. XIV MCP does not travel or walk inside a duty."
+                                : $"{TerritoryName(spot.Territory)} has no aetheryte to travel to; go there first, then retry.");
+                await EnterThroughAethernet(spot, entry.Aetheryte, entry.Quest, steps, ct).ConfigureAwait(false);
+            }
+            await CrossZone(spot, shards, steps, ct, retry, tried, unreachable).ConfigureAwait(false);
+            return;
+        }
+
         var plan = await Game.Run(() => PlanTeleport(spot, retry, tried)).ConfigureAwait(false);
         if (plan is null && retry) throw new ToolException($"No other attuned aetheryte or aethernet shard leads to {spot.Name}.");
         if (plan is { } chosen) tried?.Add(chosen.AetheryteId);
@@ -137,13 +159,7 @@ internal static partial class NavigationTools
                 var whereTo = exit.CityName ?? plan.Value.Label;
                 if (!teleported) throw new ToolException($"The teleport to {whereTo} was refused (is the aetheryte attuned, is there enough gil?).");
                 steps.Add(exit.FromInn ? $"Teleported out of the inn room to {whereTo}." : $"Teleported to {whereTo} (other cities have a shard named {plan.Value.Label} too).");
-                var left = DateTime.UtcNow + TimeSpan.FromSeconds(30);
-                while (await Game.Run(() => Svc.ClientState.TerritoryType).ConfigureAwait(false) == room)
-                {
-                    if (DateTime.UtcNow > left) throw new ToolException($"The teleport to {whereTo} did not happen (interrupted?).");
-                    await Task.Delay(250, ct).ConfigureAwait(false);
-                }
-                await WaitUntilSettled(ct).ConfigureAwait(false);
+                await WaitForTeleport(room, whereTo, ct).ConfigureAwait(false);
                 if (!exit.Plan.ThenAethernet)
                 {
                     if (await Game.Run(() => Svc.ClientState.TerritoryType).ConfigureAwait(false) != spot.Territory)
@@ -180,6 +196,18 @@ internal static partial class NavigationTools
         }
     }
 
+    /// <summary>Waits until a teleport that was accepted has left the zone <paramref name="from"/> (30 seconds at most), and the new zone has loaded.</summary>
+    private static async Task WaitForTeleport(uint from, string whereTo, CancellationToken ct)
+    {
+        var left = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (await Game.Run(() => Svc.ClientState.TerritoryType).ConfigureAwait(false) == from)
+        {
+            if (DateTime.UtcNow > left) throw new ToolException($"The teleport to {whereTo} did not happen (interrupted?).");
+            await Task.Delay(250, ct).ConfigureAwait(false);
+        }
+        await WaitUntilSettled(ct).ConfigureAwait(false);
+    }
+
     /// <summary>Teleports with the game's own teleport, as the Teleport window does. Framework thread.</summary>
     private static unsafe bool GameTeleport(uint aetheryteId) =>
         FFXIVClientStructs.FFXIV.Client.Game.UI.Telepo.Instance()->Teleport(aetheryteId, 0);
@@ -194,9 +222,23 @@ internal static partial class NavigationTools
         }
     }
 
-    /// <summary>Why travel walks instead of teleporting: how far the player is, and the nearest aetheryte or shard with a known position.</summary>
-    private static string WalkReason(NpcSpot spot)
+    /// <summary>
+    /// Why travel walks instead of teleporting: how far the player is, and the nearest aetheryte or shard with a known position. In a zone
+    /// with its own network (<paramref name="network"/>), the shards the player can use, and the jump that would have been the best one.
+    /// </summary>
+    private static string WalkReason(NpcSpot spot, IReadOnlyList<XivMcp.Maps.Shard>? network = null, IReadOnlyList<XivMcp.Maps.Shard>? usable = null)
     {
+        if (network is { Count: > 0 } && Svc.Objects.LocalPlayer is { } me)
+        {
+            var walk = Flat(me.Position, spot.Position);
+            usable ??= network;
+            if (usable.Count < 2)
+                return $"Walking: {walk:0} yalms to {spot.Name}; {usable.Count} of the zone's {network.Count} aethernet shards can be used by this character.";
+            var board = usable.MinBy(s => Flat(s.Position, me.Position))!;
+            var end = usable.Where(s => s.Id != board.Id).MinBy(s => Flat(s.Position, spot.Position))!;
+            return $"Walking: {walk:0} yalms to {spot.Name}; the aethernet would not save enough (nearest shard {board.Name} is " +
+                   $"{Flat(board.Position, me.Position):0} yalms away, {end.Name} is {Flat(end.Position, spot.Position):0} yalms from {spot.Name}).";
+        }
         var known = Svc.Data.GetExcelSheet<Aetheryte>()
             .Where(a => a.Territory.RowId == spot.Territory && (a.IsAetheryte || a.AethernetName.RowId != 0))
             .Select(a => (Name: a.IsAetheryte ? Excel.Name(a.PlaceName) : Excel.Name(a.AethernetName), Pos: AetherytePosition(a), Usable: Usable(a)))
