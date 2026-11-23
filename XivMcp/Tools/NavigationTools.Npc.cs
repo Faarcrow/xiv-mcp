@@ -212,7 +212,7 @@ internal static partial class NavigationTools
     /// The aetheryte or aethernet shard to use, or null to just walk: the one nearest to the NPC in its zone, unless the player is
     /// already in that zone and closer than it.
     /// </summary>
-    private static (uint AetheryteId, string Label, bool Shard)? PlanTeleport(NpcSpot spot, bool retry = false, ICollection<uint>? tried = null)
+    private static unsafe (uint AetheryteId, string Label, bool Shard)? PlanTeleport(NpcSpot spot, bool retry = false, ICollection<uint>? tried = null)
     {
         var rows = Svc.Data.GetExcelSheet<Aetheryte>()
             .Where(a => a.Territory.RowId == spot.Territory && (a.IsAetheryte || a.AethernetName.RowId != 0))
@@ -222,10 +222,14 @@ internal static partial class NavigationTools
         if (rows.Count == 0)
             return inZone ? null : throw new ToolException($"{TerritoryName(spot.Territory)} has no aetheryte to travel to; go there first, then retry.");
 
+        var ui = FFXIVClientStructs.FFXIV.Client.Game.UI.UIState.Instance();
+        bool Attuned(Aetheryte a) => ui == null || ui->IsAetheryteUnlocked(a.RowId);
         var options = rows.Values.Select(a => AetherytePosition(a) is { } pos
-                ? new XivMcp.Maps.TeleportOption(a.RowId, a.IsAetheryte, Flat(pos, spot.Position), player is { } pp ? Flat(pos, pp) : null)
-                : new XivMcp.Maps.TeleportOption(a.RowId, a.IsAetheryte, null, null))
+                ? new XivMcp.Maps.TeleportOption(a.RowId, a.IsAetheryte, Flat(pos, spot.Position), player is { } pp ? Flat(pos, pp) : null, Attuned(a))
+                : new XivMcp.Maps.TeleportOption(a.RowId, a.IsAetheryte, null, null, Attuned(a)))
             .ToList();
+        if (!inZone && XivMcp.Maps.TeleportPick.NoneAttuned(options))
+            throw new ToolException($"This character has not attuned to any aetheryte in {TerritoryName(spot.Territory)} yet; go there once and attune to it, then retry.");
         var choice = XivMcp.Maps.TeleportPick.Choose(options, player is { } pl ? Flat(pl, spot.Position) : null, retry, tried ?? []);
         if (choice is not { } c) return null;
         var best = rows[c.Id];

@@ -6,7 +6,8 @@ namespace XivMcp.Maps;
 /// <param name="Id">Aetheryte row.</param>
 /// <param name="ToTarget">Flat distance from it to the target, if its position is known.</param>
 /// <param name="ToPlayer">Flat distance from it to the player, if the player is in its zone and its position is known.</param>
-public readonly record struct TeleportOption(uint Id, bool IsAetheryte, float? ToTarget, float? ToPlayer);
+/// <param name="Attuned">The character has attuned to it: the game teleports only to attuned aetherytes and shards.</param>
+public readonly record struct TeleportOption(uint Id, bool IsAetheryte, float? ToTarget, float? ToPlayer, bool Attuned = true);
 
 /// <summary>
 /// Which aetheryte or aethernet shard gets the player near a target. Map positions carry no height, so the nearest shard can sit
@@ -26,10 +27,13 @@ public static class TeleportPick
     /// <returns>The option to travel to, or null to walk (on a retry: nothing else is left).</returns>
     public static TeleportOption? Choose(IReadOnlyList<TeleportOption> options, float? playerToTarget, bool retry, ICollection<uint> tried)
     {
-        var candidates = options.Where(o => !tried.Contains(o.Id) && !(retry && o.ToPlayer < StandingAt)).ToList();
+        var candidates = options.Where(o => o.Attuned && !tried.Contains(o.Id) && !(retry && o.ToPlayer < StandingAt)).ToList();
         if (candidates.Count == 0) return null;
         var best = candidates.OrderBy(o => o.ToTarget ?? float.MaxValue).ThenByDescending(o => o.IsAetheryte).First();
         if (!retry && playerToTarget is { } walk && walk <= (best.ToTarget ?? float.MaxValue) + WalkSlack) return null;
         return best;
     }
+
+    /// <summary>The zone has aetherytes or shards, but the character has attuned to none of them.</summary>
+    public static bool NoneAttuned(IReadOnlyList<TeleportOption> options) => options.Count > 0 && !options.Any(o => o.Attuned);
 }

@@ -103,3 +103,29 @@ public class AetheryteSpotTests
         Assert.Equal(new Vector3(101.3f, 9.0f, -111.3f), placed[26]);
     }
 }
+
+public class TeleportAttunedTests
+{
+    // Labyrinthos: Sharlayan Hamlet is nearest the NPC, but this character has only The Archeion attuned.
+    private static readonly TeleportOption Hamlet = new(1, true, ToTarget: 250, ToPlayer: null, Attuned: false);
+    private static readonly TeleportOption Archeion = new(2, true, ToTarget: 620, ToPlayer: null);
+
+    [Fact]
+    public void An_aetheryte_the_character_has_not_attuned_is_never_picked()
+    {
+        // Regression: travel picked the nearest aetheryte whether or not it was attuned, and the teleport then failed with
+        // "could not travel to Sharlayan Hamlet (is the aetheryte attuned?)".
+        Assert.Equal(Archeion, TeleportPick.Choose([Hamlet, Archeion], playerToTarget: null, retry: false, tried: []));
+        Assert.Null(TeleportPick.Choose([Hamlet], playerToTarget: null, retry: false, tried: []));
+        Assert.True(TeleportPick.NoneAttuned([Hamlet]));
+        Assert.False(TeleportPick.NoneAttuned([Hamlet, Archeion]));
+        Assert.False(TeleportPick.NoneAttuned([]));
+    }
+
+    [Fact]
+    public void In_the_zone_an_unattuned_shard_only_leaves_walking()
+    {
+        // Standing 300 yalms from the NPC with the only shard near it not attuned: walk.
+        Assert.Null(TeleportPick.Choose([Hamlet], playerToTarget: 300, retry: false, tried: []));
+    }
+}
