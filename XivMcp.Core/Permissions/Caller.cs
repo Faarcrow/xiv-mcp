@@ -13,11 +13,14 @@ public sealed record Caller(string Id, string Name, ToolProvider? Plugin = null)
 {
     /// <summary>The assistant, by its client's name when known.</summary>
     public static Caller Assistant(string? client = null) =>
-        string.IsNullOrWhiteSpace(client) ? new("assistant", "your AI assistant") : new($"assistant:{client}", $"your AI assistant ({client})");
+        string.IsNullOrWhiteSpace(client) ? new("assistant", "your AI assistant") : new($"assistant:{client}", $"your AI assistant ({client})") { Client = client };
 
     public static Caller ForPlugin(ToolProvider plugin) => new($"plugin:{plugin.Id}", plugin.DisplayName, plugin);
 
     public bool IsPlugin => Plugin is not null;
+
+    /// <summary>The assistant's client, as it names itself ("claude-code 2.1"), or null for a plugin or an unnamed client.</summary>
+    public string? Client { get; private init; }
 
     /// <summary>
     /// Whose standing approvals this caller may use: the assistant's (in chat or its jobs, whatever its client says) or one plugin's.

@@ -142,6 +142,30 @@ public class CallerTests
     }
 
     [Fact]
+    public async Task A_job_started_inside_a_call_belongs_to_whoever_made_the_call()
+    {
+        // Regression: jobs were recorded under the client that connected last (a second client, such as a script that only reads
+        // jobs, then got the assistant's jobs), and a job a plugin's job starts was recorded as the assistant's, so its steps ran
+        // with the assistant's permissions instead of the plugin's.
+        store.Core.Set("game_navigation", Access.Write, PolicyMode.Allow);
+        EnablePlugin(p => p.Modes[Capabilities.MoveCharacter] = PolicyMode.Allow);
+        string? recorded = null;
+        var tool = new McpTool
+        {
+            Name = "navigate_to", Description = "d", ReadOnly = false,
+            Handler = async (_, _) => { await Task.Yield(); recorded = CallScope.JobClient(fallback: "xivmcp-wait-job"); return null; },
+        };
+        await Gate().InvokeAsync(tool, Args(), default, caller: Caller.Assistant("opencode 2.3.0"));
+        Assert.Equal("opencode 2.3.0", recorded);
+        await Gate().InvokeAsync(tool, Args(), default, inJob: true, caller: FromPlugin);
+        Assert.Equal("plugin:HelloMcp", recorded);
+        await Gate().InvokeAsync(tool, Args(), default, caller: Caller.Assistant());
+        Assert.Equal("xivmcp-wait-job", recorded);
+        Assert.Equal("xivmcp-wait-job", CallScope.JobClient(fallback: "xivmcp-wait-job")); // outside a call
+        Assert.Equal("a:b", Caller.Assistant("a:b").Client);
+    }
+
+    [Fact]
     public async Task Calls_without_a_caller_are_the_assistant_s()
     {
         store.Core.Set("game_navigation", Access.Write, PolicyMode.Allow);
