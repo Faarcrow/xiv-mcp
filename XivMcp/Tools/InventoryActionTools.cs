@@ -735,8 +735,10 @@ internal static class InventoryActionTools
 
     internal static void EnsureNotBusy()
     {
+        // The idle camera's WatchingCutscene is no cutscene; it ends now, like on a key press.
+        var idleCamera = IdleCamera.Leave();
         foreach (var name in BusyFlags)
-            if (Enum.TryParse<ConditionFlag>(name, out var flag) && Svc.Condition[flag])
+            if (!(idleCamera && name == "WatchingCutscene") && Enum.TryParse<ConditionFlag>(name, out var flag) && Svc.Condition[flag])
                 throw new ToolException($"Can't change the inventory right now (character state: {name}).");
         PluginCompat.EnsureFcchIdle();
     }

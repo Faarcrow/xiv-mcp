@@ -69,6 +69,12 @@ internal static class Recovery
         string? lastWindow = null;
         var tries = 0;
         var shopConfirmed = false;
+        if (await Game.Run(IdleCamera.Leave).ConfigureAwait(false))
+        {
+            actions.Add("Ended the idle camera.");
+            // The game drops the idle camera's WatchingCutscene a frame later.
+            await GameWindows.WaitFor(() => !Svc.Condition[ConditionFlag.WatchingCutscene], TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+        }
         while (true)
         {
             ct.ThrowIfCancellationRequested();
