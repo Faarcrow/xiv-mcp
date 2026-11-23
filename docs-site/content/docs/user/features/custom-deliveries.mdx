@@ -8,7 +8,7 @@ With **Satisfier** (vsatisfy) installed, your assistant can see this week's cust
 
 | Tool | What it does |
 |---|---|
-| `get_custom_deliveries` | The deliveries left this week, and per client: unlocked or not, rank, satisfaction, deliveries left, and the three requests (craft, gather, fish) with the item, the bonus, how many it still takes and how many you carry |
+| `get_custom_deliveries` | The deliveries left this week, and per client: unlocked or not, rank, satisfaction, the deliveries to the next rank, deliveries left, and the three requests (craft, gather, fish) with the item, the bonus, how many it still takes, how many you carry, their level and the job that makes them |
 | `deliver_custom_delivery` | Delivers one client's request and waits until it is done |
 | `do_custom_deliveries` | Does this week's deliveries for all clients, one after another, as a background job |
 | `stop_custom_delivery` | Stops what Satisfier is doing |
@@ -29,6 +29,23 @@ Each client asks for three things a week: something to **craft**, to **gather** 
 
 Without `kind`, the request with this week's bonus comes first, then the crafting request (crafters' scrips buy the more valuable materia), and the gathering one (Miner or Botanist, whichever it needs) when crafting isn't possible. Fishing is never chosen unless you ask for it.
 
+## Ranks
+
+Every delivery raises the client's satisfaction by the same amount, for all three requests and with or without the bonus: 30 at rank 1, 80 at rank 2, 130 at rank 3 and 180 at rank 4. The next rank needs 90, 480, 780 and 1,080. So rank 1 takes 3 deliveries, and ranks 2, 3 and 4 take 6 each, a whole week of deliveries to that client. A rank-up brings new requests.
+
+`get_custom_deliveries` shows per client below the top rank the satisfaction one delivery adds (`satisfactionPerDelivery`) and the deliveries to the next rank (`deliveriesToRankUp`). How many a request "still takes" is not the way to the next rank: it is the client's deliveries left this week, or fewer when the client ranks up before that.
+
+## Levels
+
+Satisfier crafts and gathers with the job its **Job choice** setting picks: the crafter and gatherer you chose (Specific), your current job (Current), or your crafter and gatherer with the lowest or the highest level (Lowest XP, Highest XP). It does not look at the request's level. Satisfier shows the crafter and gatherer to choose only with Specific; with the other choices it falls back to the last ones chosen there (Carpenter and Miner unless you changed them), for example when no crafter is unlocked. With Current, Satisfier still crafts with the chosen crafter, and gathers with your job when the delivery starts if that is Miner or Botanist. In the weekly job a crafting or fishing delivery changes your job, so a gathering delivery after it uses the chosen gatherer, which can be another one than the plan expected.
+
+`get_custom_deliveries` shows per request its level, the job that makes it and that job's level. For crafting the level is the recipe's, for gathering the lowest gathering point that has the item (or the item's own level, if that is higher), for fishing the fish's or its spot's. A job can make a request somewhat below its level:
+
+- A crafter can start recipes up to 5 levels above its own. A level 71 Armorer crafted a level 72 recipe at the client's top collectability tier.
+- A gatherer finds gathering points up to 4 levels above its own, as gathering guides say. Checked in game only 5 levels above (hidden) and 2 below (visible); 1 to 4 levels above is not checked yet. Whether an item above the gatherer's level can be gathered at a point it finds is not known, so XIV MCP does not refuse for it.
+
+Further below than that, XIV MCP does not start a crafting or gathering delivery: it says so before anything is bought, and the weekly job delivers another kind to that client instead. Within it, the delivery goes ahead. Whether the items reach the collectability the client asks for depends on your gear as much as on the job's level, so XIV MCP does not guess it. What counts is what Satisfier makes: everything the request still takes this week, also past the scrip cap, less the items already in your bags. It counts crafted items from collectability 1 and gathered ones from the client's lowest tier. Fishing levels are only shown: no margin is known for them, so XIV MCP does not judge them.
+
 ## The weekly job
 
 `do_custom_deliveries` plans every client's remaining deliveries within the weekly allowance, then delivers them one client after another. `kind` uses one kind for everyone, `clients` limits it to some clients. `get_job` follows it.
@@ -40,6 +57,7 @@ The plan:
 - **Then clients with a bonus** this week, on a request that can be delivered (a fishing bonus only counts when you ask for fishing).
 - **Then clients whose achievements need the most deliveries**: each client's "The Customer Is Always Right" achievements count the deliveries to them, up to 150. XIV MCP asks the game for that count, as the Achievements window does. The others follow in the game's order.
 - **Per client: the bonus request, then crafting, gathering for the rest.** A request stops where the scrip cap would be passed (the cap counts every delivery in the plan), or where it takes fewer deliveries than the client still does (Tiisol Ja at rank 4 takes three of each). The next kind then takes the client's remaining deliveries.
+- **A request the job cannot make is left out** (see [Levels](#levels)), and the next kind takes its place. `leftOutForLevel` names the requests the plan would otherwise have delivered, and why.
 
 The plan shows per client whether it ranks up, whether the request has the bonus, and the deliveries its achievements still need (`achievementDeliveriesLeft`).
 

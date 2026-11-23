@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using Lumina.Excel.Sheets;
 using XivMcp.CustomDeliveries;
 
 namespace XivMcp.Util;
@@ -26,16 +27,35 @@ internal static class SatisfierBridge
     {
         /// <summary>
         /// The client for <see cref="DeliveryPlan"/>: its deliveries left this week, whether it still ranks up (the game shows a
-        /// satisfaction bar only below the top rank), the capped scrips each request pays and the deliveries its achievements still
-        /// need (<see cref="AchievementProgress.DeliveriesLeft"/>). Framework thread (reads the currencies).
+        /// satisfaction bar only below the top rank), the capped scrips each request pays, the deliveries its achievements still
+        /// need (<see cref="AchievementProgress.DeliveriesLeft"/>) and the crafting and gathering requests that cannot be made, with
+        /// the items in the bags counted as Satisfier counts them. Framework thread (reads the currencies and the bags).
         /// </summary>
-        public DeliveryNpc ForPlan(int? achievementLeft = null) => new(Name, Unlocked, Remaining, Enumerable.Range(0, 3).Where(i => Bonus[i]).Select(i => (DeliveryKind)i).ToHashSet())
-        {
-            Left = DeliveriesLeft,
-            GainsRank = SatisfactionMax > 0,
-            Rewards = [.. Enumerable.Range(0, 3).Select(i => (IReadOnlyList<CappedReward>)SatisfierBridge.Rewards(this, (DeliveryKind)i))],
-            AchievementLeft = achievementLeft,
-        };
+        public DeliveryNpc ForPlan(int? achievementLeft, RequestData levels) =>
+            new(Name, Unlocked, Remaining, Enumerable.Range(0, 3).Where(i => Bonus[i]).Select(i => (DeliveryKind)i).ToHashSet())
+            {
+                Left = DeliveriesLeft,
+                GainsRank = SatisfactionMax > 0,
+                Rewards = [.. Enumerable.Range(0, 3).Select(i => (IReadOnlyList<CappedReward>)SatisfierBridge.Rewards(this, (DeliveryKind)i))],
+                AchievementLeft = achievementLeft,
+                Blocked = new[] { DeliveryKind.Craft, DeliveryKind.Gather }
+                    .Where(k => levels.Jobs[(int)k]?.Blocks(InBags(levels, k), Remaining[(int)k]) == true).ToHashSet(),
+            };
+
+        /// <summary>The request's items in the bags that Satisfier counts as delivered or made (<see cref="RequestData.MinCollectability"/>). Framework thread.</summary>
+        public int InBags(RequestData levels, DeliveryKind kind) => Util.Items.CountInBags(Items[(int)kind], levels.MinCollectability[(int)kind]);
+    }
+
+    /// <summary>
+    /// Per request (craft, gather, fish) of one client, from game data: the job that makes it with its level against the request's
+    /// (null where it is not known: Satisfier's settings cannot be read, a spearfishing request), that job's name, the collectability
+    /// from which Satisfier counts an item in the bags (AutoCraft and AutoFish count from 1, AutoGather from the request's lowest
+    /// tier), and what one delivery adds to the client's satisfaction (its reward row's, at the highest tier, as Satisfier counts it;
+    /// 0: not known).
+    /// </summary>
+    public sealed record RequestData(DeliveryJob?[] Jobs, string?[] JobNames, short[] MinCollectability, int[] SatisfactionPerDelivery)
+    {
+        public static RequestData Unknown => new(new DeliveryJob?[3], new string?[3], [1, 1, 1], [0, 0, 0]);
     }
 
     private static object Window => Plugin.Get(Plugin.Self, "_wndMain") ?? throw Plugin.Unsupported("Plugin._wndMain");
@@ -54,16 +74,185 @@ internal static class SatisfierBridge
             var fish = Plugin.Get(npc, "FishData");
             var remaining = Enumerable.Range(0, 3).Select(i => Convert.ToInt32(Plugin.Call(npc, "RemainingTurnins", i))).ToArray();
             var index = Int(npc, "Index");
+            var rewards = (uint[])(Plugin.Get(npc, "Rewards") ?? new uint[3]);
             clients.Add(new Client(npc, index, Plugin.Get(npc, "Name") as string ?? "?", IsUnlocked(index),
                 Int(npc, "Rank"), Int(npc, "SatisfactionCur"), Int(npc, "SatisfactionMax"), Math.Max(0, max - used),
                 (uint[])(Plugin.Get(npc, "TurnInItems") ?? new uint[3]), (bool[])(Plugin.Get(npc, "IsBonusEffective") ?? new bool[3]), remaining,
                 Plugin.Get(npc, "CraftData") is not null, Plugin.Get(npc, "GatherData") is not null, fish is not null,
                 fish is not null && Plugin.Get(fish, "IsSpearFish") is true,
                 fish is null ? 0 : Convert.ToUInt32(Plugin.Get(fish, "FishSpotId")),
-                (uint[])(Plugin.Get(npc, "Rewards") ?? new uint[3])));
+                rewards));
         }
         return clients;
     }
+
+    /// <summary>
+    /// Satisfier's job choice (its config), or null when this version of Satisfier keeps it elsewhere or has a choice XIV MCP does
+    /// not know: then no level is checked. Framework thread.
+    /// </summary>
+    private static SatisfierJobSettings? JobSettings()
+    {
+        try
+        {
+            var config = Plugin.StaticValue("Satisfy.Plugin", "Config") ?? throw Plugin.Unsupported("Plugin.Config");
+            var name = Plugin.Get(config, "CraftJobType")?.ToString();
+            if (SatisfierJobs.Choice(name) is not { } choice)
+            {
+                Svc.Log.Warning($"[MCP] Satisfier's job choice '{name}' is not known to XIV MCP: no levels are checked.");
+                return null;
+            }
+            return new(choice, Convert.ToUInt32(Plugin.Get(config, "SelectedCraftJob")), Convert.ToUInt32(Plugin.Get(config, "SelectedGatherJob")));
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Warning($"[MCP] Satisfier's job choice could not be read, no levels are checked: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The crafters (ClassJobCategory 33) and gatherers (Miner, Botanist) in the ClassJob sheet's order, and Fisher. Built off the
+    /// framework thread (<see cref="PrepareJobRows"/>) before <see cref="PickJobs"/> reads the levels on it.
+    /// </summary>
+    private static readonly Lazy<(ClassJob[] Crafters, ClassJob[] Gatherers, ClassJob Fisher)> JobRows = new(() =>
+    {
+        var sheet = Svc.Data.GetExcelSheet<ClassJob>();
+        return ([.. sheet.Where(row => row.ClassJobCategory.RowId == 33)], [.. sheet.Where(row => row.RowId is 16 or 17)], sheet.GetRow(18));
+    }, System.Threading.LazyThreadSafetyMode.PublicationOnly);
+
+    /// <summary>Builds the job rows <see cref="PickJobs"/> needs, from game data: call it off the framework thread first. Never throws.</summary>
+    public static void PrepareJobRows()
+    {
+        try { _ = JobRows.Value; }
+        catch (Exception ex) { Svc.Log.Warning($"[MCP] The crafter and gatherer rows could not be read: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// The crafter and gatherer Satisfier would use now (<see cref="SatisfierJobs"/>) and the character's levels in them and in Fisher,
+    /// once per call. Null, with one warning, when Satisfier's settings cannot be read. Framework thread.
+    /// </summary>
+    public static JobPick? PickJobs()
+    {
+        if (JobSettings() is not { } settings) return null;
+        try
+        {
+            var (crafterRows, gathererRows, fisher) = JobRows.Value;
+            var crafters = crafterRows.Select(row => new JobLevel(row.RowId, Svc.PlayerState.GetClassJobLevel(row))).ToList();
+            var gatherers = gathererRows.Select(row => new JobLevel(row.RowId, Svc.PlayerState.GetClassJobLevel(row))).ToList();
+            var crafter = SatisfierJobs.Crafter(settings, crafters);
+            var gatherer = SatisfierJobs.Gatherer(settings, gatherers, Svc.PlayerState.ClassJob.RowId);
+            return new(crafters.FirstOrDefault(j => j.Job == crafter, new(crafter, 0)), gatherers.FirstOrDefault(j => j.Job == gatherer, new(gatherer, 0)),
+                       Svc.PlayerState.GetClassJobLevel(fisher));
+        }
+        catch (Exception ex)
+        {
+            Svc.Log.Warning($"[MCP] The jobs Satisfier would use could not be worked out, no levels are checked: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Per client (by name), its requests' game data (<see cref="RequestData"/>): run it off the framework thread. Never throws: when
+    /// game data or Satisfier's client data is not as expected, it logs one warning and leaves the client's data unknown, so nothing
+    /// is checked.
+    /// </summary>
+    public static Dictionary<string, RequestData> Requests(IEnumerable<Client> clients, JobPick? pick)
+    {
+        var result = new Dictionary<string, RequestData>();
+        string? problem = null;
+        foreach (var client in clients)
+        {
+            try { result[client.Name] = LevelsOf(client, pick); }
+            catch (Exception ex)
+            {
+                problem ??= ex.Message;
+                result[client.Name] = RequestData.Unknown;
+            }
+        }
+        if (problem is not null) Svc.Log.Warning($"[MCP] Custom delivery levels could not be read, they are not checked: {problem}");
+        return result;
+    }
+
+    private static RequestData LevelsOf(Client client, JobPick? pick)
+    {
+        var rewards = Svc.Data.GetExcelSheet<SatisfactionSupplyReward>();
+        int[] perDelivery = [.. client.Rewards.Select(r => (int)(rewards.GetRowOrDefault(r)?.SatisfactionHigh ?? 0))];
+        var jobs = new DeliveryJob?[3];
+        var names = new string?[3];
+        short gatherMin = SupplyCollectability.Value.TryGetValue(client.Items[1], out var low) ? (short)low : (short)1;
+        if (pick is { } p)
+        {
+            if (RecipeLevel(client.Items[0], p.Crafter.Job) is { } recipe) jobs[0] = DeliveryJob.Craft(p.Crafter.Job, p.Crafter.Level, recipe);
+            if (GatheringLevels.Value.TryGetValue((client.Items[1], p.Gatherer.Job), out var point))
+                jobs[1] = new(p.Gatherer.Job, p.Gatherer.Level, point.Level, point.MinLevel);
+            if (!client.SpearFish && FishingLevel(client.Items[2], client.FishSpot) is { } fish) jobs[2] = DeliveryJob.Fish(p.FisherLevel, fish);
+            for (var i = 0; i < 3; i++) names[i] = jobs[i] is { } j ? JobName(j.Job) : null;
+        }
+        return new(jobs, names, [1, gatherMin, 1], perDelivery);
+    }
+
+    public static string JobName(uint job) =>
+        Svc.Data.GetExcelSheet<ClassJob>().GetRowOrDefault(job) is { } row ? Game.TitleCase(row.Name.ExtractText()) : $"job {job}";
+
+    /// <summary>The level of the item's recipe for the crafter, the one Satisfier crafts (its GetRecipe: Carpenter's for other jobs).</summary>
+    private static int? RecipeLevel(uint item, uint crafter)
+    {
+        if (Svc.Data.GetExcelSheet<RecipeLookup>().GetRowOrDefault(item) is not { } lookup) return null;
+        var recipe = crafter switch
+        {
+            9 => lookup.BSM, 10 => lookup.ARM, 11 => lookup.GSM, 12 => lookup.LTW, 13 => lookup.WVR, 14 => lookup.ALC, 15 => lookup.CUL,
+            _ => lookup.CRP,
+        };
+        return recipe.RowId == 0 ? null : recipe.ValueNullable?.RecipeLevelTable.ValueNullable?.ClassJobLevel;
+    }
+
+    /// <summary>
+    /// Per item and gathering job (Miner, Botanist), over the gathering points that have it: the request's level (the lowest point's, or
+    /// the item's own if higher) and the lowest job level that finds such a point and can gather the item (<see cref="DeliveryJob.GatherLevels"/>).
+    /// </summary>
+    private static readonly Lazy<Dictionary<(uint Item, uint Job), (int Level, int MinLevel)>> GatheringLevels = new(() =>
+    {
+        var gatheringItems = Svc.Data.GetExcelSheet<GatheringItem>();
+        var levels = new Dictionary<(uint, uint), (int Level, int MinLevel)>();
+        foreach (var point in Svc.Data.GetExcelSheet<GatheringPointBase>())
+        {
+            uint job = point.GatheringType.RowId switch { 0 or 1 => 16, 2 or 3 => 17, _ => 0 };
+            if (job == 0) continue;
+            foreach (var gi in point.Item)
+            {
+                if (gi.RowId == 0 || gatheringItems.GetRowOrDefault(gi.RowId) is not { } row || row.Item.RowId == 0) continue;
+                var (level, minLevel) = DeliveryJob.GatherLevels(point.GatheringLevel, row.GatheringItemLevel.ValueNullable?.GatheringItemLevel ?? 0);
+                var key = (row.Item.RowId, job);
+                levels[key] = levels.TryGetValue(key, out var known) ? (Math.Min(level, known.Level), Math.Min(minLevel, known.MinLevel)) : (level, minLevel);
+            }
+        }
+        return levels;
+    }, System.Threading.LazyThreadSafetyMode.PublicationOnly);
+
+    /// <summary>Per fish, its level (the first FishParameter row that has it).</summary>
+    private static readonly Lazy<Dictionary<uint, int>> FishLevels = new(() =>
+    {
+        var levels = new Dictionary<uint, int>();
+        foreach (var fish in Svc.Data.GetExcelSheet<FishParameter>())
+            if (fish.Item.RowId != 0) levels.TryAdd(fish.Item.RowId, fish.GatheringItemLevel.ValueNullable?.GatheringItemLevel ?? 0);
+        return levels;
+    }, System.Threading.LazyThreadSafetyMode.PublicationOnly);
+
+    /// <summary>Per delivery item, the collectability of its lowest tier, from the first SatisfactionSupply row that has it, as Satisfier reads it.</summary>
+    private static readonly Lazy<Dictionary<uint, ushort>> SupplyCollectability = new(() =>
+    {
+        var lows = new Dictionary<uint, ushort>();
+        foreach (var rows in Svc.Data.GetSubrowExcelSheet<SatisfactionSupply>())
+            foreach (var row in rows)
+                if (row.Item.RowId != 0) lows.TryAdd(row.Item.RowId, row.CollectabilityLow);
+        return lows;
+    }, System.Threading.LazyThreadSafetyMode.PublicationOnly);
+
+    /// <summary>The fish's level or its fishing spot's, whichever is higher.</summary>
+    private static int? FishingLevel(uint item, uint spot) =>
+        FishLevels.Value.TryGetValue(item, out var level)
+            ? Math.Max(level, Svc.Data.GetExcelSheet<FishingSpot>().GetRowOrDefault(spot)?.GatheringLevel ?? 0)
+            : null;
 
     private static int Int(object o, string member) => Convert.ToInt32(Plugin.Get(o, member));
 

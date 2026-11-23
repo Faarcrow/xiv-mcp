@@ -25,10 +25,26 @@ internal static class CustomDeliveryTools
             Description = "This week's custom deliveries, from Satisfier: the deliveries left this week (for all clients together), and per " +
                           "client whether you unlocked them, their rank and satisfaction, the deliveries left, and their three requests (to " +
                           "craft, to gather, to fish) with the item, whether it carries the bonus, how many it still takes and how many you " +
-                          "carry. Also which kinds can be delivered automatically: crafting needs Artisan, gathering Questionable, fishing AutoHook.",
+                          "carry. 'stillTakes' is the client's deliveries left this week, or fewer when the client ranks up first; it is not " +
+                          "the way to the next rank: a client below the top rank has 'satisfactionPerDelivery' (the same for all three " +
+                          "requests, bonus or not) and 'deliveriesToRankUp', which can be more than this week allows (a rank-up brings new " +
+                          "requests). Per request also its 'level' (the recipe's for the crafter Satisfier uses, the lowest gathering point " +
+                          "that has it for the gatherer, the fish's or its spot's for Fisher), that 'job' and its 'jobLevel', and 'levelOk': " +
+                          "the job can make it (a crafter starts recipes up to 5 levels above its own, a gatherer finds points up to 4 above " +
+                          "its own), or enough are in the bags at the collectability Satisfier counts. Crafting and gathering with levelOk " +
+                          "false are refused. Whether the items reach the collectability the client asks for depends on gear as much as on " +
+                          "level, so it is not judged. Fishing levels are only shown, never enforced: no " +
+                          "margin is known, so levelOk is null for fishing. The level fields are null when Satisfier's settings cannot be " +
+                          "read (then nothing is checked). The refusal counts what Satisfier makes: all the request still takes less what " +
+                          "is in the bags, whatever the scrip cap. Also which kinds can be " +
+                          "delivered automatically: crafting needs Artisan, gathering Questionable, fishing AutoHook.",
             InputSchema = """{ "type": "object", "properties": {} }""",
             ReadOnly = true,
-            Handler = (_, ct) => Game.Run(Overview),
+            Handler = async (_, ct) =>
+            {
+                var (clients, allowances, levels) = await ReadClients(ct).ConfigureAwait(false);
+                return await Game.Run(() => Overview(clients, allowances, levels)).ConfigureAwait(false);
+            },
         };
 
         yield return new McpTool
@@ -39,7 +55,9 @@ internal static class CustomDeliveryTools
                           "in the fish you carry (catch them first: do_custom_deliveries does both, or catch_fish). Without 'kind': the bonus " +
                           "request, else crafting, else gathering (Miner or Botanist); fishing only when the player asks for it. Delivers only as many as fit under " +
                           "the reward scrips' cap (get_custom_deliveries shows fitUnderScripCap), and refuses when none fit: spend the scrips " +
-                          "first. Requires 'Custom Deliveries' in /xivmcp.",
+                          "first. Satisfier crafts and gathers with the job its 'Job choice' setting picks, without looking at the request's " +
+                          "level: a crafting or gathering request that job cannot make (levelOk false in get_custom_deliveries) is refused " +
+                          "before anything is bought, and without 'kind' the next kind is chosen. Requires 'Custom Deliveries' in /xivmcp.",
             InputSchema = """
                 {
                   "type": "object",
@@ -61,7 +79,8 @@ internal static class CustomDeliveryTools
                           "weekly allowance (clients below their top rank first; clients whose 'The Customer Is " +
                           "Always Right' achievements are done last; then clients with a bonus request, then those needing the most deliveries; per client the bonus request first, then " +
                           "crafting as far as the scrip cap allows, gathering with Miner or Botanist for the rest; never fishing unless " +
-                          "asked for; only kinds a plugin can do), then " +
+                          "asked for; only kinds a plugin can do; not crafting or gathering a request the job Satisfier picks cannot make: " +
+                          "'leftOutForLevel' names those the plan would otherwise have delivered), then " +
                           "delivers them one client after another with deliver_custom_delivery. Fishing requests are caught first with " +
                           "AutoHook (switch to Fisher, bait, the spot, fish_until), only with kind 'fish'. Optional 'kind' for everyone and 'clients' to limit it. " +
                           "Follow it with get_job. Requires 'Custom Deliveries' in /xivmcp; each step follows its own module.",
@@ -78,14 +97,19 @@ internal static class CustomDeliveryTools
             Handler = async (args, ct) =>
             {
                 var only = args.Array("clients")?.Select(n => n?.ToString() ?? "").Where(n => n.Length > 0).ToList();
-                var (clients, allowances) = await Game.Run(() => (SatisfierBridge.Clients(), SatisfierBridge.Allowances())).ConfigureAwait(false);
+                var (clients, allowances, levels) = await ReadClients(ct).ConfigureAwait(false);
                 var achievementLeft = new Dictionary<string, int?>();
                 foreach (var c in clients.Where(c => c.Unlocked && c.DeliveriesLeft > 0))
                     achievementLeft[c.Name] = await AchievementProgress.DeliveriesLeft(c.Name, ct).ConfigureAwait(false);
-                var npcs = await Game.Run(() => clients.Select(c => c.ForPlan(achievementLeft.GetValueOrDefault(c.Name))).ToList()).ConfigureAwait(false);
-                var plan = DeliveryPlan.Choose(npcs, Possible(), allowances, Kind(args), only);
+                var npcs = await Game.Run(() => clients.Select(c => c.ForPlan(achievementLeft.GetValueOrDefault(c.Name), levels[c.Name])).ToList()).ConfigureAwait(false);
+                var possible = Possible();
+                var plan = DeliveryPlan.Choose(npcs, possible, allowances, Kind(args), only);
+                // The requests the plan would have delivered if their job could make them, so the plan's choice is explained.
+                var leftOut = DeliveryPlan.LeftOutForLevel(npcs, possible, allowances, Kind(args), only)
+                    .Select(x => CannotMake(clients.First(c => c.Name == x.Npc.Name), x.Kind, levels[x.Npc.Name])).OfType<string>().ToList();
                 if (plan.Count == 0)
-                    throw new ToolException(allowances == 0 ? "No custom deliveries left this week." : "Nothing to deliver: no unlocked client has a request a plugin can do.");
+                    throw new ToolException(allowances == 0 ? "No custom deliveries left this week."
+                                                            : string.Join(" ", ["Nothing to deliver: no unlocked client has a request a plugin can do.", .. leftOut]));
 
                 var steps = new List<JobManager.Step>();
                 foreach (var (run, i) in plan.Select((r, i) => (r, i)))
@@ -119,6 +143,7 @@ internal static class CustomDeliveryTools
                         client = p.Npc.Name, kind = p.Kind.ToString().ToLowerInvariant(), count = p.Count, bonus = p.Npc.Bonus.Contains(p.Kind),
                         ranksUp = p.Npc.GainsRank, achievementDeliveriesLeft = p.Npc.AchievementLeft,
                     }),
+                    leftOutForLevel = leftOut.Count > 0 ? leftOut : null,
                 };
             },
         };
@@ -159,38 +184,83 @@ internal static class CustomDeliveryTools
 
     private static readonly string[] KindNames = ["craft", "gather", "fish"];
 
-    private static object Overview()
+    /// <summary>
+    /// Satisfier's clients, the week's deliveries left, and per client its requests' levels against the jobs Satisfier would use:
+    /// Satisfier's state and the job levels on the framework thread, the game data off it.
+    /// </summary>
+    private static async Task<(List<SatisfierBridge.Client> Clients, int Allowances, Dictionary<string, SatisfierBridge.RequestData> Levels)> ReadClients(
+        CancellationToken ct, string? only = null)
+    {
+        await Task.Run(SatisfierBridge.PrepareJobRows, ct).ConfigureAwait(false);
+        var (clients, allowances, pick) = await Game.Run(() =>
+            (only is null ? SatisfierBridge.Clients() : [Find(only)], SatisfierBridge.Allowances(), SatisfierBridge.PickJobs())).ConfigureAwait(false);
+        var levels = await Task.Run(() => SatisfierBridge.Requests(clients, pick), ct).ConfigureAwait(false);
+        return (clients, allowances, levels);
+    }
+
+    /// <summary>Framework thread (reads the bags and currencies).</summary>
+    private static object Overview(List<SatisfierBridge.Client> clients, int allowances, Dictionary<string, SatisfierBridge.RequestData> levels)
     {
         var possible = Possible();
         return new
         {
-            deliveriesLeftThisWeek = SatisfierBridge.Allowances(),
+            deliveriesLeftThisWeek = allowances,
             automatic = KindNames.Where((_, i) => possible.Contains((DeliveryKind)i)),
             turnInAgent = SatisfierBridge.TurnInAgent(),
-            clients = SatisfierBridge.Clients().Select(c => new
+            clients = clients.Select(c =>
             {
-                client = c.Name,
-                unlocked = c.Unlocked,
-                rank = c.Rank,
-                satisfaction = c.SatisfactionMax > 0 ? $"{c.Satisfaction}/{c.SatisfactionMax}" : null,
-                deliveriesLeft = c.DeliveriesLeft,
-                requests = c.Unlocked && c.Rank > 0
-                    ? Enumerable.Range(0, 3).Select(i => new
-                    {
-                        kind = KindNames[i],
-                        item = Items.Name(c.Items[i]),
-                        bonus = c.Bonus[i],
-                        stillTakes = c.Remaining[i],
-                        inBags = Items.CountInBags(c.Items[i]),
-                        // Deliveries past this would take a scrip over its cap (the game asks first; nothing answers).
-                        fitUnderScripCap = ScripCap.DeliveriesThatFit(SatisfierBridge.Rewards(c, (DeliveryKind)i), c.Remaining[i]),
-                        cappedBy = ScripCap.Limiting(SatisfierBridge.Rewards(c, (DeliveryKind)i), c.Remaining[i]) is { } cap
-                            ? $"{cap.Currency} {cap.Have:N0}/{cap.Max:N0}, up to {cap.PerDelivery} per delivery" : null,
-                        note = i == 2 && c.SpearFish ? "spearfishing" : null,
-                    })
-                    : null,
+                var request = levels[c.Name];
+                // Every request of a rank adds the same satisfaction (game data); the smallest counts if that ever changes.
+                var perDelivery = request.SatisfactionPerDelivery.Where(s => s > 0).DefaultIfEmpty(0).Min();
+                return new
+                {
+                    client = c.Name,
+                    unlocked = c.Unlocked,
+                    rank = c.Rank,
+                    satisfaction = c.SatisfactionMax > 0 ? $"{c.Satisfaction}/{c.SatisfactionMax}" : null,
+                    satisfactionPerDelivery = c.Unlocked && c.SatisfactionMax > 0 && perDelivery > 0 ? perDelivery : (int?)null,
+                    deliveriesToRankUp = c.Unlocked ? RankProgress.DeliveriesToRankUp(c.Satisfaction, c.SatisfactionMax, perDelivery) : null,
+                    deliveriesLeft = c.DeliveriesLeft,
+                    requests = c.Unlocked && c.Rank > 0
+                        ? Enumerable.Range(0, 3).Select(i =>
+                        {
+                            var job = request.Jobs[i];
+                            var usable = c.InBags(request, (DeliveryKind)i);
+                            return new
+                            {
+                                kind = KindNames[i],
+                                item = Items.Name(c.Items[i]),
+                                bonus = c.Bonus[i],
+                                stillTakes = c.Remaining[i],
+                                inBags = Items.CountInBags(c.Items[i]),
+                                // Deliveries past this would take a scrip over its cap (the game asks first; nothing answers).
+                                fitUnderScripCap = ScripCap.DeliveriesThatFit(SatisfierBridge.Rewards(c, (DeliveryKind)i), c.Remaining[i]),
+                                cappedBy = ScripCap.Limiting(SatisfierBridge.Rewards(c, (DeliveryKind)i), c.Remaining[i]) is { } cap
+                                    ? $"{cap.Currency} {cap.Have:N0}/{cap.Max:N0}, up to {cap.PerDelivery} per delivery" : null,
+                                level = job?.Level,
+                                job = request.JobNames[i],
+                                jobLevel = job?.JobLevel,
+                                levelOk = job?.LevelOk(usable, c.Remaining[i]),
+                                note = i == 2 && c.SpearFish ? "spearfishing" : null,
+                            };
+                        })
+                        : null,
+                };
             }),
         };
+    }
+
+    /// <summary>Why the job Satisfier would use cannot make a crafting or gathering request, or null when its level is not known.</summary>
+    private static string? CannotMake(SatisfierBridge.Client c, DeliveryKind kind, SatisfierBridge.RequestData levels) =>
+        levels.Jobs[(int)kind] is { } job && levels.JobNames[(int)kind] is { } name
+            ? DeliveryLevelText.CannotMake(kind, Items.Name(c.Items[(int)kind]), c.Name, name, job)
+            : null;
+
+    /// <summary>The plugins that are missing for crafting or gathering, as sentences.</summary>
+    private static IEnumerable<string> MissingPlugins()
+    {
+        if (!PluginCompat.IsLoaded("Artisan")) yield return "Crafting needs Artisan, which is not loaded.";
+        if (!PluginCompat.IsLoaded("Questionable")) yield return "Gathering needs Questionable, which is not loaded.";
     }
 
     /// <summary>
@@ -224,13 +294,19 @@ internal static class CustomDeliveryTools
 
     private static async Task<object> Deliver(string name, DeliveryKind? kind, CancellationToken ct)
     {
-        var c = await Game.Run(() => Find(name)).ConfigureAwait(false);
+        var (found, allowances, levelsOf) = await ReadClients(ct, name).ConfigureAwait(false);
+        var c = found[0];
+        var levels = levelsOf[c.Name];
         if (!c.Unlocked) throw new ToolException($"{c.Name} is not unlocked yet.");
         if (c.DeliveriesLeft == 0) throw new ToolException($"{c.Name} takes no more deliveries this week.");
-        if (await Game.Run(SatisfierBridge.Allowances).ConfigureAwait(false) == 0) throw new ToolException("No custom deliveries left this week.");
-        var forPlan = await Game.Run(() => c.ForPlan()).ConfigureAwait(false);
-        var chosen = kind ?? DeliveryPlan.Choose([forPlan], Possible(), 99).FirstOrDefault()?.Kind
-                     ?? throw new ToolException($"None of {c.Name}'s requests can be delivered automatically now (crafting needs Artisan, gathering Questionable).");
+        if (allowances == 0) throw new ToolException("No custom deliveries left this week.");
+        var forPlan = await Game.Run(() => c.ForPlan(null, levels)).ConfigureAwait(false);
+        if ((kind ?? DeliveryPlan.Choose([forPlan], Possible(), 99).FirstOrDefault()?.Kind) is not { } chosen)
+        {
+            var why = MissingPlugins().Concat(forPlan.Blocked?.Select(k => CannotMake(c, k, levels)).OfType<string>() ?? []).ToList();
+            throw new ToolException($"None of {c.Name}'s requests can be delivered automatically now. " +
+                                    (why.Count > 0 ? string.Join(" ", why) : "The scrips they pay may be at their cap: get_custom_deliveries shows fitUnderScripCap."));
+        }
         switch (chosen)
         {
             case DeliveryKind.Craft when !PluginCompat.IsLoaded("Artisan"):
@@ -260,6 +336,14 @@ internal static class CustomDeliveryTools
             statuses.Add($"Only {fits} of {planned} deliveries fit under the cap: {why}.");
             planned = fits;
         }
+        var (inBags, usable) = await Game.Run(() => (Items.CountInBags(c.Items[(int)chosen]), c.InBags(levels, chosen))).ConfigureAwait(false);
+        var viaQuestionable = TurnInWatch.TurnInWithQuestionable(chosen == DeliveryKind.Gather, inBags, planned);
+        // Satisfier crafts and gathers with the job its settings pick, whatever the request's level, and makes all the request still
+        // takes, whatever the scrip cap: refuse before it buys anything when that job cannot make them.
+        if (levels.Jobs[(int)chosen] is { } job && levels.JobNames[(int)chosen] is { } jobName &&
+            job.Refuses(SatisfierMakes.Items(chosen, c.Remaining[(int)chosen], usable, viaQuestionable)))
+            throw new ToolException($"{DeliveryLevelText.CannotMake(chosen, item, c.Name, jobName, job)} Nothing was bought or made. Raise {jobName} " +
+                                    $"to level {job.MinLevel}, choose another job in Satisfier's settings (Job choice), or deliver another kind.");
         var rankedUp = false;
         var lastLeft = c.DeliveriesLeft;
         var progressAt = DateTime.UtcNow;
@@ -269,8 +353,6 @@ internal static class CustomDeliveryTools
         var window = await Game.Run(SatisfierBridge.KeepWindowOpen).ConfigureAwait(false);
         // Satisfier and Questionable turn in themselves; YesAlready's own turn-in races them (see PluginCompat.PauseYesAlready).
         using var yesAlready = PluginCompat.PauseYesAlready("custom deliveries");
-        var inBags = await Game.Run(() => Items.CountInBags(c.Items[(int)chosen])).ConfigureAwait(false);
-        var viaQuestionable = TurnInWatch.TurnInWithQuestionable(chosen == DeliveryKind.Gather, inBags, planned);
         // Who drives the delivery: Satisfier (which may run Questionable to gather), or Questionable alone turning in.
         bool Busy() => viaQuestionable ? QuestionableTools.Running : SatisfierBridge.Running;
         // Questionable is stopped after every gathering delivery, also one Satisfier ran: left running after a turn-in that ranked the
