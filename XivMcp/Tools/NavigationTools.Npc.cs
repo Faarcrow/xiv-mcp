@@ -235,11 +235,18 @@ internal static partial class NavigationTools
 
     internal static Vector3? AetherytePosition(Aetheryte a)
     {
-        foreach (var level in a.Level)
-            if (level.RowId != 0 && level.ValueNullable is { } l) return new Vector3(l.X, l.Y, l.Z);
-        // Aetherytes and aethernet shards often have no Level row; their map marker gives the position. Shards have no map of
-        // their own: their marker is on the zone's map. Aetheryte markers point at the aetheryte (data type 3); shard markers are
-        // plain markers named after the shard (in Solution Nine: data type 0, the aethernet icon, the shard's place name).
+        Vector3? level = null;
+        foreach (var l in a.Level)
+            if (l.RowId != 0 && l.ValueNullable is { } row) { level = new Vector3(row.X, row.Y, row.Z); break; }
+        return XivMcp.Maps.AetheryteSpot.Choose(ZoneLayout.Aetheryte(a.Territory.RowId, a.RowId), level, () => MarkerPosition(a));
+    }
+
+    /// <summary>Where the map marks an aetheryte or shard that has no object in its zone's layout and no Level row.</summary>
+    private static Vector3? MarkerPosition(Aetheryte a)
+    {
+        // Shards have no map of their own: their marker is on the zone's map. Aetheryte markers point at the aetheryte (data type 3);
+        // shard markers are plain markers named after the shard (in Solution Nine: data type 0, the aethernet icon, the shard's place
+        // name), and in the cities such a name usually labels the district rather than the shard.
         // A shard's Map is row 0, which exists (an empty default row): only take a map that is really set.
         if ((a.Map.RowId != 0 ? a.Map.ValueNullable : a.Territory.ValueNullable?.Map.ValueNullable) is not { } map) return null;
         bool Points(MapMarker m) => m.DataType is 3 or 4 && m.DataKey.RowId == a.RowId;
@@ -251,13 +258,10 @@ internal static partial class NavigationTools
         var found = onMap?.Where(Points).Select(m => (MapMarker?)m).FirstOrDefault()
                     ?? onMap?.Where(Named).Select(m => (MapMarker?)m).FirstOrDefault()
                     ?? Svc.Data.GetSubrowExcelSheet<MapMarker>().SelectMany(m => m).Where(Points).Select(m => (MapMarker?)m).FirstOrDefault();
-        if (found is { } marker)
-        {
-            // MapMarker X/Y are map pixels (0-2048).
-            var scale = map.SizeFactor / 100f;
-            return new Vector3((marker.X - 1024) / scale - map.OffsetX, 0, (marker.Y - 1024) / scale - map.OffsetY);
-        }
-        return null;
+        if (found is not { } marker) return null;
+        // MapMarker X/Y are map pixels (0-2048).
+        var scale = map.SizeFactor / 100f;
+        return new Vector3((marker.X - 1024) / scale - map.OffsetX, 0, (marker.Y - 1024) / scale - map.OffsetY);
     }
 
     /// <summary>Where a map shows markers with this icon (world X/Z; Y unknown, 0). Framework thread.</summary>
