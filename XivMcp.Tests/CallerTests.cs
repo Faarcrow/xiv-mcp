@@ -123,6 +123,19 @@ public class CallerTests
     }
 
     [Fact]
+    public async Task The_tool_learns_whether_it_runs_as_a_job_step()
+    {
+        // A direct call has to answer before the AI app gives up on it; a job step can wait for as long as its work takes.
+        store.Core.Set("game_navigation", Access.Write, PolicyMode.Allow);
+        bool? inJob = null;
+        var tool = new McpTool { Name = "navigate_to", Description = "d", ReadOnly = false, Handler = (a, _) => { inJob = a.InJob; return Task.FromResult<object?>(null); } };
+        await Gate().InvokeAsync(tool, Args(), default);
+        Assert.False(inJob);
+        await Gate().InvokeAsync(tool, Args(), default, inJob: true);
+        Assert.True(inJob);
+    }
+
+    [Fact]
     public async Task Helpers_deep_inside_a_call_know_who_called()
     {
         // Recovery, run from inside navigate_to, asks the player before closing a shop: it must not answer with the AI's approvals for a plugin.
