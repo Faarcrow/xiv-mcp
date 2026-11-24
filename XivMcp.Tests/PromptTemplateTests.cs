@@ -42,4 +42,30 @@ public class PromptTemplateTests
         Assert.False(PromptTemplate.Matches("Anything?", ["", " "]));
         Assert.False(PromptTemplate.Matches("", ReplaceMissing));
     }
+
+    // Addon rows 2436 and 2437 (English), the warnings buy_item answers by ticking Proceed, as their fixed pieces around the line break.
+    private static readonly string[][] EquipWarnings =
+    [
+        ["You cannot currently equip this item.", "Proceed with the transaction?"],
+        ["You will never be able to equip this item.", "Proceed with the transaction?"],
+    ];
+
+    private static bool IsEquipWarning(string prompt) => EquipWarnings.Any(w => PromptTemplate.Matches(prompt, w));
+
+    [Fact]
+    public void The_equip_warnings_match_as_the_shop_shows_them()
+    {
+        // As a gil shop showed it in game, with the window's line break.
+        Assert.True(IsEquipWarning("You cannot currently equip this item.\nProceed with the transaction?"));
+        Assert.True(IsEquipWarning("You will never be able to equip this item.\nProceed with the transaction?"));
+    }
+
+    [Fact]
+    public void Other_proceed_prompts_are_not_equip_warnings()
+    {
+        // Same "Proceed" box, different decision: these must be answered No, not ticked.
+        Assert.False(IsEquipWarning("Your fisher level is not high enough to use this bait. Proceed with the transaction?"));
+        Assert.False(IsEquipWarning("You already own this weapon. Proceed with the transaction?"));
+        Assert.False(IsEquipWarning("You are unable to carry any more Fine Sand and will not receive full compensation. Proceed with the transaction?"));
+    }
 }
