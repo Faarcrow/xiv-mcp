@@ -25,9 +25,22 @@ internal static class ZoneLayout
     private static readonly ConcurrentDictionary<uint, IReadOnlyDictionary<uint, Vector3>> Aetherytes = new();
     private static readonly ConcurrentDictionary<uint, IReadOnlyList<Placement>> EventObjectsRead = new();
 
-    /// <summary>Where the zone's layout places an aetheryte or shard, or null when it has no object there.</summary>
+    /// <summary>
+    /// Where the zone's layout places an aetheryte or shard, or null when it has no object there. The first call for a zone reads its
+    /// layout (a few milliseconds): call <see cref="Warm"/> off the framework thread first.
+    /// </summary>
     public static Vector3? Aetheryte(uint territory, uint aetheryte) =>
-        Aetherytes.GetOrAdd(territory, ReadAetherytes).TryGetValue(aetheryte, out var at) ? at : null;
+        AetherytesOf(territory) is { } placed && placed.TryGetValue(aetheryte, out var at) ? at : null;
+
+    /// <summary>Reads the zone's aetherytes now, so a later <see cref="Aetheryte"/> on the framework thread finds them kept.</summary>
+    public static void Warm(uint territory) => _ = AetherytesOf(territory);
+
+    /// <summary>The zone's placed aetherytes, or null when its layout could not be read; that is not kept, so the next call tries again.</summary>
+    private static IReadOnlyDictionary<uint, Vector3>? AetherytesOf(uint territory)
+    {
+        if (Aetherytes.TryGetValue(territory, out var known)) return known;
+        return ReadAetherytes(territory) is { } read ? Aetherytes.GetOrAdd(territory, read) : null;
+    }
 
     /// <summary>
     /// The zone's event objects: their EObj row and where each stands, with its height. Null when the layout could not be read; that is
@@ -51,7 +64,7 @@ internal static class ZoneLayout
         }
     }
 
-    private static IReadOnlyDictionary<uint, Vector3> ReadAetherytes(uint territory)
+    private static IReadOnlyDictionary<uint, Vector3>? ReadAetherytes(uint territory)
     {
         try
         {
@@ -66,7 +79,7 @@ internal static class ZoneLayout
         catch (Exception ex)
         {
             Svc.Log.Warning($"[MCP] Reading the layout of territory {territory} failed: {ex.Message}");
-            return new Dictionary<uint, Vector3>();
+            return null;
         }
     }
 

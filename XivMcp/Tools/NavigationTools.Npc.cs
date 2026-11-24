@@ -118,6 +118,8 @@ internal static partial class NavigationTools
             return;
         }
 
+        // The zone's layout is read the first time it is needed; read it here, not on the framework thread.
+        await Task.Run(() => ZoneLayout.Warm(spot.Territory), ct).ConfigureAwait(false);
         var plan = await Game.Run(() => PlanTeleport(spot, retry, tried)).ConfigureAwait(false);
         if (plan is null && retry) throw new ToolException($"No other attuned aetheryte or aethernet shard leads to {spot.Name}.");
         if (plan is { } chosen) tried?.Add(chosen.AetheryteId);
@@ -254,10 +256,6 @@ internal static partial class NavigationTools
                 : $"nearest attuned is {attuned[0].Name} ({attuned[0].Distance:0} yalms from it; {located.Count} of {known.Count} located).{nearer}");
     }
 
-    /// <summary>
-    /// The aetheryte or aethernet shard to use, or null to just walk: the one nearest to the NPC in its zone, unless the player is
-    /// already in that zone and closer than it.
-    /// </summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<uint, IReadOnlySet<uint>> CityZoneCache = new();
 
     /// <summary>The zones of an aethernet group that are its city (<see cref="XivMcp.Maps.AetheryteAccess.CityZones"/>).</summary>
@@ -281,6 +279,10 @@ internal static partial class NavigationTools
                                                   CityZonesOf(a.AethernetGroup).Contains(Svc.ClientState.TerritoryType));
     }
 
+    /// <summary>
+    /// The aetheryte or aethernet shard to use, or null to just walk: the one nearest to the NPC in its zone, unless the player is
+    /// already in that zone and closer than it.
+    /// </summary>
     private static (uint AetheryteId, string Label, bool Shard)? PlanTeleport(NpcSpot spot, bool retry = false, ICollection<uint>? tried = null)
     {
         var rows = Svc.Data.GetExcelSheet<Aetheryte>()
@@ -303,6 +305,19 @@ internal static partial class NavigationTools
         if (best.IsAetheryte) return (best.RowId, Excel.Name(best.PlaceName) ?? $"aetheryte {best.RowId}", false);
         return (best.RowId, Excel.Name(best.AethernetName) ?? $"aethernet {best.RowId}", true);
     }
+
+    /// <summary>
+    /// Reads, off the framework thread, the layouts of the zones that <see cref="AetherytePosition"/> will look at for this aetheryte or
+    /// shard: its own zone and that of its city's main aetheryte.
+    /// </summary>
+    internal static Task WarmLayouts(uint aetheryteId, CancellationToken ct) => Task.Run(() =>
+    {
+        var sheet = Svc.Data.GetExcelSheet<Aetheryte>();
+        if (sheet.GetRowOrDefault(aetheryteId) is not { } row) return;
+        ZoneLayout.Warm(row.Territory.RowId);
+        if (row.AethernetGroup != 0 && sheet.FirstOrDefault(a => a.IsAetheryte && a.AethernetGroup == row.AethernetGroup) is { RowId: not 0 } city)
+            ZoneLayout.Warm(city.Territory.RowId);
+    }, ct);
 
     internal static Vector3? AetherytePosition(Aetheryte a)
     {

@@ -218,6 +218,7 @@ internal static partial class NavigationTools
     private static async Task EnterThroughAethernet(NpcSpot spot, uint aetheryteId, uint? quest, List<string> steps, CancellationToken ct)
     {
         var zone = TerritoryName(spot.Territory);
+        await WarmLayouts(aetheryteId, ct).ConfigureAwait(false);
         var (name, territory, position, open, questName, attuned) = await Game.Run(() =>
         {
             var row = Svc.Data.GetExcelSheet<Aetheryte>().GetRow(aetheryteId);
