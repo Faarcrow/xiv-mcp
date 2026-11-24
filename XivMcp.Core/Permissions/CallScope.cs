@@ -16,4 +16,16 @@ public static class CallScope
         get => current.Value;
         internal set => current.Value = value;
     }
+
+    /// <summary>
+    /// Who a job started inside the call running now belongs to: the assistant's client ("opencode 2.3.0"), or "plugin:&lt;id&gt;"
+    /// for a plugin's call, as the plugin API records the plugin's own jobs, so their steps stay held to that plugin's permissions.
+    /// <paramref name="fallback"/> (the client that connected last) when the call names no client, or outside a call.
+    /// </summary>
+    public static string? JobClient(string? fallback) => Current switch
+    {
+        { IsPlugin: true } plugin => plugin.Id,
+        { Client: { } client } => client,
+        _ => fallback,
+    };
 }

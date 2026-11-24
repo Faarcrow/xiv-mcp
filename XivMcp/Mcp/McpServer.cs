@@ -427,10 +427,11 @@ public sealed partial class McpServer : IDisposable
         var isError = false;
         IReadOnlyList<ToolImage> images = [];
         var started = DateTime.UtcNow;
-        var activity = Activity.Begin(name, LastClient, started, XivMcp.Jobs.JobTimeline.WaitEnds(name, p?["arguments"] as JsonObject, started));
+        var client = session?.ClientName ?? LastClient;
+        var activity = Activity.Begin(name, client, started, XivMcp.Jobs.JobTimeline.WaitEnds(name, p?["arguments"] as JsonObject, started));
         try
         {
-            var caller = XivMcp.Permissions.Caller.Assistant(session?.ClientName ?? LastClient);
+            var caller = XivMcp.Permissions.Caller.Assistant(client);
             var result = await gate.InvokeAsync(tool, new ToolArgs(p?["arguments"] as JsonObject), ct, caller: caller).ConfigureAwait(false);
             if (result is ToolResultWithImages withImages)
             {
