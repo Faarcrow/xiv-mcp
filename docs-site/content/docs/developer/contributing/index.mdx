@@ -84,7 +84,7 @@ yield return new McpTool
 };
 ```
 
-Tools that change something set `ReadOnly = false`. Tools that wait are `async` and pass `ct` on, so stopping a job or the app giving up stops them too.
+Tools that change something set `ReadOnly = false`. Tools that wait are `async` and pass `ct` on, so stopping a job stops them too. The app giving up on a call does not cancel it: a direct call should answer within about a minute, and longer work belongs in a job step.
 
 ## Writing for players
 

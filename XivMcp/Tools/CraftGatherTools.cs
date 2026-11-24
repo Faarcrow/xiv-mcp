@@ -67,7 +67,7 @@ internal static class CraftGatherTools
                           "'stall_minutes' (default 5) or its Raphael solver works on one craft for 3 minutes: Artisan is stopped then (after a " +
                           "solver hang the job runs the step again by itself). Pausing or cancelling the job stops Artisan too. When the step " +
                           "runs again (retry, resume, or a new craft_item step with the same item and amount after a failed or skipped one), it " +
-                          "crafts only what is still missing. Called directly, it answers when Artisan is done, at the latest about 40 seconds " +
+                          "crafts only what is still missing (for a second batch after a failed step, retry or skip that step first, or use another amount). Called directly, it answers when Artisan is done, at the latest about 40 seconds " +
                           "after the call came in (time on an approval window counts): if Artisan is not done by then, it answers with done=false " +
                           "and the crafts made so far, and Artisan goes on crafting (craft_item is refused until it is done; crafting_control " +
                           "action=stop stops it). So more than a few crafts belong in a job step. Refuses recipes that use an equipment item as " +
