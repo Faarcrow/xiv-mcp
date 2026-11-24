@@ -123,7 +123,7 @@ public static class ToolSummaries
         ["revoke_approval"] = "Withdraws a spending approval you have given.",
         ["sell_item"] = "Lists an item through a retainer, just below the cheapest offer. Prices far too low are refused.",
         ["retrieve_listing"] = "Takes market listings of an item back from a retainer, into your bags or the retainer's inventory.",
-        ["sell_to_vendor"] = "Sells items from your bags for gil, at a merchant's shop or through a retainer at a summoning bell.",
+        ["sell_to_vendor"] = "Sells items from your bags and armoury chest for gil, at a merchant's shop or through a retainer.",
         ["reprice_listings"] = "Undercuts cheaper offers on your listings. Cuts of more than 30 percent are skipped.",
         ["get_sale_history"] = "Calls a retainer at the summoning bell to look at their recent sales.",
 

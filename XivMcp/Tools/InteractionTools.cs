@@ -29,7 +29,7 @@ internal static class InteractionTools
         [11] = ["InventoryEvent"], [13] = ["FriendList"], [16] = ["AreaMap"], [17] = ["Emote"], [21] = ["Macro"], [25] = ["ArmouryBoard"],
         [27] = ["FreeCompany"], [29] = ["FishingNoteBook"], [33] = ["ContentsFinder"], [35] = ["Teleport"], [41] = ["FishGuide2"],
         [57] = ["LookingForGroup"], [60] = ["ContentsNote"], [61] = ["MountNoteBook"], [62] = ["MinionNoteBook"], [65] = ["GoldSaucerInfo"],
-        [66] = ["Currency"], [67] = ["AetherCurrent"], [69] = ["OrchestrionPlayList"], [77] = ["InventoryBuddy"], [87] = ["Collection"],
+        [66] = ["Currency"], [67] = ["AetherCurrent"], [69] = ["OrchestrionPlayList"], [77] = ["InventoryBuddy", "InventoryBuddy2"], [87] = ["Collection"],
         [89] = ["OrnamentNoteBook"], [93] = ["CharaCard"], [95] = ["GlassSelect"],
     };
 

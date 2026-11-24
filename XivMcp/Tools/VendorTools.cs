@@ -36,16 +36,39 @@ internal static class VendorTools
 
     private static readonly InventoryType[] Bags = [InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4];
 
+    /// <summary>
+    /// The saddlebag, whose context menu offers neither Sell nor Have Retainer Sell Items (checked in game at a merchant, and at a
+    /// retainer with the saddlebag window open). Only read to tell the player that what they asked for is there.
+    /// </summary>
+    private static readonly InventoryType[] Saddlebag =
+        [InventoryType.SaddleBag1, InventoryType.SaddleBag2, InventoryType.PremiumSaddleBag1, InventoryType.PremiumSaddleBag2];
+
+    /// <summary>A place items are sold from: its containers, and the windows the player right-clicks them in (the menu's owner).</summary>
+    private sealed record Source(InventoryType[] Containers, string[] Windows);
+
+    /// <summary>
+    /// Where items are sold from, in this order, as the game's context menu allows: the bags, then the armoury chest (gear bought from
+    /// a vendor often lands there). Never what is worn, nor the saddlebag (see <see cref="Saddlebag"/>).
+    /// </summary>
+    private static readonly Source[] Sources =
+    [
+        new(Bags, InventoryAddons),
+        new(Items.Armoury, ["ArmouryBoard"]),
+    ];
+
     public static IEnumerable<McpTool> Create(Configuration config)
     {
         yield return new McpTool
         {
             Name = "sell_to_vendor",
-            Description = "Sells items from the bags for gil, as the inventory's context menu does: 'Sell' while a merchant's shop is " +
-                          "open (talk to a merchant, open its shop), or 'Have Retainer Sell Items' while a retainer's inventory is open " +
-                          "at a summoning bell (open_retainer), which saves walking to a merchant. Whole stacks, smallest first: all of " +
-                          "an item, at most 'quantity', or all but 'keep'. Vendors pay little (often 1 to 10 gil each), so check the " +
-                          "market board first (get_market_prices). Items a vendor does not buy are reported and left alone. Untradable items " +
+            Description = "Sells items from the bags and the armoury chest for gil, as their context menu does: 'Sell' while a " +
+                          "merchant's shop is open (talk to a merchant, open its shop), or 'Have Retainer Sell Items' while a retainer's " +
+                          "inventory is open at a summoning bell (open_retainer), which saves walking to a merchant. Whole stacks, smallest " +
+                          "first: all of an item, at most 'quantity', or all but 'keep'. Vendors pay little (often 1 to 10 gil each), so " +
+                          "check the market board first (get_market_prices). Items a vendor does not buy, and items a gear set uses (every " +
+                          "copy), are reported and left alone. The game does not sell from the saddlebag: copies there are reported with how " +
+                          "to move them to the bags, which at a shop means closing it first (the game does not open the saddlebag then). " +
+                          "Untradable items " +
                           "are only sold after the player approves them in game (one question for all of them in the call); declined ones " +
                           "are left alone. A stack the player moved or changed meanwhile is left alone and reported under 'skipped'. Sold items can be bought back: from a merchant's buyback tab until the shop is closed, or from " +
                           "the retainer's \"Item buyback\" until it is dismissed. Before XIV MCP itself closes that shop or dismisses that " +
@@ -93,11 +116,16 @@ internal static class VendorTools
                         if (!CanSell()) throw new ToolException("No shop or retainer inventory is open. Talk to a merchant and open its shop first (navigate_to destination npc or object), or open a retainer at a summoning bell (open_retainer), then sell.");
                         return wanted.Select(w => (Item: Items.Resolve(w.Query), w.Quantity, w.Keep)).ToList();
                     }).ConfigureAwait(false);
-                    var plans = new List<(Lumina.Excel.Sheets.Item Item, List<Stack> Stacks, IReadOnlyList<int> Pick)>();
+                    var plans = new List<(Lumina.Excel.Sheets.Item Item, List<Stack> Stacks, IReadOnlyList<int> Pick, string? Refused, int InSaddlebag)>();
+                    var gearsets = await Game.Run(Gearsets.ItemIds).ConfigureAwait(false);
+                    // What to do with saddlebag copies depends on it: a merchant's shop keeps the saddlebag from opening.
+                    var atShop = await Game.Run(() => Buyback.ShopOpen).ConfigureAwait(false);
                     foreach (var (item, quantity, keep) in resolved)
                     {
-                        var stacks = await Game.Run(() => StacksOf(item.RowId)).ConfigureAwait(false);
-                        try { plans.Add((item, stacks, VendorSale.Pick(stacks.Select(s => s.Quantity).ToList(), quantity, keep))); }
+                        var (stacks, inSaddlebag) = await Game.Run(() => (StacksOf(item.RowId), StacksIn(Saddlebag, item.RowId).Sum(s => s.Quantity)))
+                                                              .ConfigureAwait(false);
+                        var refused = VendorSale.Refusal(item.PriceLow > 0, stacks.Sum(s => s.Quantity), inSaddlebag, gearsets.Contains(item.RowId), atShop);
+                        try { plans.Add((item, stacks, refused is null ? VendorSale.Pick(stacks.Select(s => s.Quantity).ToList(), quantity, keep) : [], refused, inSaddlebag)); }
                         catch (ArgumentOutOfRangeException e) { throw new ToolException($"{item.Name.ExtractText()}: {e.Message}"); }
                     }
                     // Only what would really be sold is asked about.
@@ -112,17 +140,17 @@ internal static class VendorTools
 
                     var gilBefore = await Game.Run(Gil).ConfigureAwait(false);
                     var results = new List<object>();
-                    foreach (var (item, stacks, pick) in plans)
+                    foreach (var (item, stacks, pick, refused, inSaddlebag) in plans)
                     {
                         var name = item.Name.ExtractText();
-                        if (item.IsUntradable && item.PriceLow > 0 && pick.Count > 0 && !untradableApproved.Contains(item.RowId))
+                        if (refused is not null)
                         {
-                            results.Add(new { item = name, sold = 0, note = "Untradable: the player did not approve selling it in game, so it was left alone." });
+                            results.Add(new { item = name, sold = 0, note = refused });
                             continue;
                         }
-                        if (item.PriceLow == 0)
+                        if (item.IsUntradable && pick.Count > 0 && !untradableApproved.Contains(item.RowId))
                         {
-                            results.Add(new { item = name, sold = 0, note = "Vendors do not buy this item." });
+                            results.Add(new { item = name, sold = 0, note = "Untradable: the player did not approve selling it in game, so it was left alone." });
                             continue;
                         }
                         var sold = 0;
@@ -150,7 +178,11 @@ internal static class VendorTools
                             await Task.Delay(Random.Shared.Next(350, 650), ct).ConfigureAwait(false);
                         }
                         var left = stacks.Sum(s => s.Quantity) - sold;
-                        results.Add(new { item = name, sold, left, vendorPrice = item.PriceLow, stopped, skipped = skipped.Count > 0 ? skipped : null });
+                        results.Add(new
+                        {
+                            item = name, sold, left, vendorPrice = item.PriceLow, stopped, skipped = skipped.Count > 0 ? skipped : null,
+                            saddlebag = VendorSale.LeftInSaddlebag(inSaddlebag, atShop),
+                        });
                         if (stopped is not null) break;
                     }
                     var gilAfter = await Game.Run(Gil).ConfigureAwait(false);
@@ -194,7 +226,7 @@ internal static class VendorTools
     }
 
     /// <summary>
-    /// Sells one stack: its context menu, "Sell", the confirmation if the game asks; waits until it is gone from the bag. Returns
+    /// Sells one stack: its context menu, "Sell", the confirmation if the game asks; waits until it is gone from its slot. Returns
     /// why it was left alone when its slot no longer holds the planned stack (the player may have sorted or moved items while the
     /// approval was open), else null. That is checked in the same frame the context menu opens, so nothing else can be sold.
     /// </summary>
@@ -209,10 +241,12 @@ internal static class VendorTools
         if (changed is not null) return changed;
         if (!await GameWindows.WaitFor(() => GameWindows.Ready("ContextMenu"), TimeSpan.FromSeconds(3), ct).ConfigureAwait(false))
             throw new ToolException($"The context menu of {name} did not open.");
+        var noSell = $"{name}'s context menu has no Sell entry: the shop or retainer window may have closed, or merchants do not buy it.";
         if (!await Game.Run(PickSell).ConfigureAwait(false))
         {
             // The inventory window on its "Key Items & Crystals" tab makes the menu leave out Sell: close it and open the menu
-            // without an owner window, as the game does when the inventory isn't shown.
+            // without an owner window, as the game does when the inventory isn't shown. That tab has nothing to do with the armoury chest.
+            if (!Bags.Contains(stack.Container)) throw new ToolException(noSell);
             await Game.Run(CloseInventoryWindows).ConfigureAwait(false);
             await Task.Delay(300, ct).ConfigureAwait(false);
             changed = await Game.Run(() =>
@@ -224,8 +258,7 @@ internal static class VendorTools
             if (changed is not null) return changed;
             if (!await GameWindows.WaitFor(() => GameWindows.Ready("ContextMenu"), TimeSpan.FromSeconds(3), ct).ConfigureAwait(false))
                 throw new ToolException($"The context menu of {name} did not open.");
-            if (!await Game.Run(PickSell).ConfigureAwait(false))
-                throw new ToolException($"{name}'s context menu has no Sell entry: the shop or retainer window may have closed, or merchants do not buy it.");
+            if (!await Game.Run(PickSell).ConfigureAwait(false)) throw new ToolException(noSell);
         }
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (DateTime.UtcNow < deadline)
@@ -275,7 +308,8 @@ internal static class VendorTools
     private static unsafe void OpenContextMenu(Stack stack, bool withOwner = true)
     {
         AtkUnitBase* owner = null;
-        foreach (var name in withOwner ? InventoryAddons : [])
+        var owners = Sources.First(s => s.Containers.Contains(stack.Container)).Windows;
+        foreach (var name in withOwner ? owners : [])
         {
             var a = GameWindows.Addon(name);
             if (a != null && a->IsVisible) { owner = a; break; }
@@ -308,11 +342,13 @@ internal static class VendorTools
 
     private static unsafe long Gil() => InventoryManager.Instance()->GetGil();
 
-    private static unsafe List<Stack> StacksOf(uint itemId)
+    private static List<Stack> StacksOf(uint itemId) => StacksIn(Sources.SelectMany(s => s.Containers), itemId);
+
+    private static unsafe List<Stack> StacksIn(IEnumerable<InventoryType> containers, uint itemId)
     {
         var im = InventoryManager.Instance();
         var stacks = new List<Stack>();
-        foreach (var container in Bags)
+        foreach (var container in containers)
         {
             var c = im->GetInventoryContainer(container);
             if (c == null) continue;

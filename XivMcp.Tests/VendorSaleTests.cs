@@ -94,4 +94,53 @@ public class VendorSaleTests
         Assert.False(VendorSale.Confirms(materia, SellPrompt, UntradableWarning, sellUntradable: true));
         Assert.False(VendorSale.IsUntradableWarning(materia, UntradableWarning));
     }
+
+    [Fact]
+    public void Items_vendors_do_not_buy_are_refused_first()
+    {
+        Assert.Equal("Vendors do not buy this item.", VendorSale.Refusal(vendorsBuy: false, held: 0, inSaddlebag: 3, inGearset: true, atShop: true));
+    }
+
+    [Fact]
+    public void Having_none_says_where_it_looked()
+    {
+        // An item that is only worn, or nowhere, is somewhere the tool doesn't sell from: say where it looked.
+        Assert.Equal("None in the bags or the armoury chest.", VendorSale.Refusal(vendorsBuy: true, held: 0, inSaddlebag: 0, inGearset: false, atShop: true));
+        Assert.Equal("None in the bags or the armoury chest.", VendorSale.Refusal(vendorsBuy: true, held: 0, inSaddlebag: 0, inGearset: true, atShop: true));
+    }
+
+    [Fact]
+    public void An_item_only_in_the_saddlebag_says_how_to_get_it_out_where_the_player_sells()
+    {
+        // At a shop the saddlebag can't even be opened, so the shop has to close first; next to a retainer it opens.
+        var atShop = VendorSale.Refusal(vendorsBuy: true, held: 0, inSaddlebag: 2, inGearset: false, atShop: true);
+        Assert.StartsWith("None in the bags or the armoury chest, but 2 in the saddlebag.", atShop);
+        Assert.Contains("close the shop (close_window)", atShop);
+        Assert.Contains("open the shop again", atShop);
+
+        var atRetainer = VendorSale.Refusal(vendorsBuy: true, held: 0, inSaddlebag: 2, inGearset: false, atShop: false);
+        Assert.StartsWith("None in the bags or the armoury chest, but 2 in the saddlebag.", atRetainer);
+        Assert.Contains("open it next to the retainer", atRetainer);
+        Assert.DoesNotContain("close the shop", atRetainer);
+    }
+
+    [Fact]
+    public void A_gear_set_piece_in_the_saddlebag_is_not_worth_moving()
+    {
+        Assert.Equal("A gear set uses it, so it is not sold.", VendorSale.Refusal(vendorsBuy: true, held: 0, inSaddlebag: 1, inGearset: true, atShop: false));
+    }
+
+    [Fact]
+    public void Gear_set_pieces_are_never_sold()
+    {
+        Assert.Equal("A gear set uses it, so it is not sold.", VendorSale.Refusal(vendorsBuy: true, held: 1, inSaddlebag: 0, inGearset: true, atShop: true));
+        Assert.Null(VendorSale.Refusal(vendorsBuy: true, held: 1, inSaddlebag: 5, inGearset: false, atShop: true));
+    }
+
+    [Fact]
+    public void Copies_left_in_the_saddlebag_are_reported_after_a_sale()
+    {
+        Assert.Null(VendorSale.LeftInSaddlebag(0, atShop: true));
+        Assert.StartsWith("5 more in the saddlebag, not sold.", VendorSale.LeftInSaddlebag(5, atShop: false));
+    }
 }
