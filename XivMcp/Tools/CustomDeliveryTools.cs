@@ -562,8 +562,8 @@ internal static class CustomDeliveryTools
 
     /// <summary>
     /// The rank-up delivery, left to the player: once the deliveries before it are in and its item is in the bags, asks the player in
-    /// game to hand it in and waits until the client's rank changes (or the delivery goes in short of it), then until the player is out
-    /// of the client's story. Never clicks or recovers anything in a conversation the player started meanwhile, also when the step is
+    /// game to hand it in and waits until the delivery is counted, then until the player is out of the client's story, and judges then
+    /// whether the client ranked up (the rank changes during the story). Never clicks or recovers anything in a conversation the player started meanwhile, also when the step is
     /// stopped or fails (<see cref="JobManager.PlayerInConversation"/>); see <see cref="HandInWait"/> and <see cref="StoryWait"/> for
     /// when it gives up. Returns true once the client ranked up.
     /// </summary>
@@ -592,7 +592,7 @@ internal static class CustomDeliveryTools
                     var (client, inConversation) = await Game.Run(() => (Find(c.Name), InConversation())).ConfigureAwait(false);
                     outcome = wait.Poll(DateTime.UtcNow, inConversation, client.Rank != c.Rank, client.DeliveriesLeft);
                     // Only a conversation the player started is theirs: one held from before (a menu left open) recovery may close.
-                    JobManager.Instance?.PlayerInConversation(DeliverTool, wait.PlayersConversation || outcome is HandIn.RankedUp or HandIn.WentInShort);
+                    JobManager.Instance?.PlayerInConversation(DeliverTool, wait.PlayersConversation || outcome is HandIn.RankedUp or HandIn.WentIn);
                     if (outcome is HandIn.TimedOut or HandIn.TimedOutInConversation)
                     {
                         var stillHave = await Game.Run(() => c.InBags(levels, kind)).ConfigureAwait(false) > 0;
@@ -616,6 +616,7 @@ internal static class CustomDeliveryTools
                 case StoryEnd.Over:
                     JobManager.Instance?.PlayerInConversation(DeliverTool, false);
                     var rank = (await Game.Run(() => Find(c.Name)).ConfigureAwait(false)).Rank;
+                    outcome = PlayerRankUp.AfterStory(outcome, rank != c.Rank);
                     statuses.Add(outcome == HandIn.WentInShort ? PlayerRankUp.WentInShort(item, c.Name)
                                  : askedPlayer ? $"You handed in {item}: {c.Name} reached rank {rank}."
                                  : $"{c.Name} reached rank {rank}, and you are out of the story.");

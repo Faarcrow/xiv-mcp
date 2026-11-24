@@ -49,11 +49,19 @@ public static class PlayerRankUp
         $"{client}'s delivery went in, but the game still holds the character with no window left. The delivery is done: " +
         "recover_game_state gets the character free, then skip this step to go on.";
 
+    /// <summary>
+    /// What the hand-in came to, judged once the player is out of the client's story: the game counts the delivery at Hand Over, but
+    /// changes the rank only later, in the story, so a delivery that went in ranked the client up when the rank has changed by then.
+    /// </summary>
+    public static HandIn AfterStory(HandIn outcome, bool rankChanged) =>
+        outcome == HandIn.WentIn ? rankChanged ? HandIn.RankedUp : HandIn.WentInShort : outcome;
+
     public static string AlreadyRankedUp(string client, int rank) =>
         $"{client} reached rank {rank} in an earlier run of this step: the rank-up was handed in, nothing more to deliver here.";
 }
 
-public enum HandIn { Wait, RankedUp, WentInShort, TimedOut, TimedOutInConversation }
+/// <summary>How the wait for the hand-in ended. <see cref="WentIn"/>: the delivery is counted, the rank not (yet) changed; see <see cref="PlayerRankUp.AfterStory"/>.</summary>
+public enum HandIn { Wait, RankedUp, WentIn, WentInShort, TimedOut, TimedOutInConversation }
 
 /// <summary>
 /// The wait for the player's hand-in, one look per poll. A conversation counts as the player's only when it started after they were
@@ -75,9 +83,10 @@ public sealed class HandInWait(DateTime asked, int deliveriesLeft)
         if (!inConversation) freeSinceAsked = true;
         PlayersConversation = inConversation && freeSinceAsked;
         if (rankChanged) return HandIn.RankedUp;
-        // The game counts the delivery and changes the rank together: a second look makes sure the rank did not follow.
+        // The delivery is counted at Hand Over; the rank changes later, in the client's story (judged then: PlayerRankUp.AfterStory).
+        // A second look makes sure the count holds.
         wentInPolls = deliveriesLeftNow < deliveriesLeft ? wentInPolls + 1 : 0;
-        if (wentInPolls >= 2) return HandIn.WentInShort;
+        if (wentInPolls >= 2) return HandIn.WentIn;
         var waited = now - asked;
         if (waited > PlayerRankUp.HardLimit) return PlayersConversation ? HandIn.TimedOutInConversation : HandIn.TimedOut;
         return waited > PlayerRankUp.Limit && !PlayersConversation ? HandIn.TimedOut : HandIn.Wait;

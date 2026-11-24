@@ -715,10 +715,19 @@ public class PlayerRankUpTests
     [Fact]
     public void A_hand_in_that_does_not_rank_up_ends_the_wait_after_a_second_look()
     {
-        // The rank may change a moment after the delivery is counted: only a second look without it is a delivery that fell short.
+        // The delivery is counted at Hand Over, the rank only later in the story: a counted delivery ends the wait either way.
         var wait = new HandInWait(Asked, deliveriesLeft: 3);
         Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddMinutes(2), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
-        Assert.Equal(HandIn.WentInShort, wait.Poll(Asked.AddMinutes(2.1), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
+        Assert.Equal(HandIn.WentIn, wait.Poll(Asked.AddMinutes(2.1), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
+    }
+
+    [Fact]
+    public void Whether_the_hand_in_ranked_the_client_up_is_judged_after_the_story()
+    {
+        // Kai-Shirr, 2026-11-24: the count dropped at Hand Over, rank 2 to 3 came during the story.
+        Assert.Equal(HandIn.RankedUp, PlayerRankUp.AfterStory(HandIn.WentIn, rankChanged: true));
+        Assert.Equal(HandIn.WentInShort, PlayerRankUp.AfterStory(HandIn.WentIn, rankChanged: false));
+        Assert.Equal(HandIn.RankedUp, PlayerRankUp.AfterStory(HandIn.RankedUp, rankChanged: true));
     }
 
     [Fact]
