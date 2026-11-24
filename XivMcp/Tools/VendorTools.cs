@@ -66,7 +66,8 @@ internal static class VendorTools
                           "inventory is open at a summoning bell (open_retainer), which saves walking to a merchant. Whole stacks, smallest " +
                           "first: all of an item, at most 'quantity', or all but 'keep'. Vendors pay little (often 1 to 10 gil each), so " +
                           "check the market board first (get_market_prices). Items a vendor does not buy, and items a gear set uses (every " +
-                          "copy), are reported and left alone. Untradable items " +
+                          "copy), are reported and left alone. The game does not sell from the saddlebag: an item that is only there is " +
+                          "reported, to be moved to the bags first (move_items). Untradable items " +
                           "are only sold after the player approves them in game (one question for all of them in the call); declined ones " +
                           "are left alone. A stack the player moved or changed meanwhile is left alone and reported under 'skipped'. Sold items can be bought back: from a merchant's buyback tab until the shop is closed, or from " +
                           "the retainer's \"Item buyback\" until it is dismissed. Before XIV MCP itself closes that shop or dismisses that " +
