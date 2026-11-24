@@ -33,19 +33,23 @@ internal static class VendorTools
     private const uint UntradableWarning = 399;
 
     private static readonly string[] InventoryAddons = ["InventoryExpansion", "InventoryLarge", "Inventory"];
+    private const string ArmouryAddon = "ArmouryBoard";
 
     private static readonly InventoryType[] Bags = [InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4];
+
+    /// <summary>Where items are sold from, as the game's context menu allows: the bags first, then the armoury chest (gear bought from a vendor often lands there).</summary>
+    private static readonly InventoryType[] SellFrom = [.. Bags, .. Items.Armoury];
 
     public static IEnumerable<McpTool> Create(Configuration config)
     {
         yield return new McpTool
         {
             Name = "sell_to_vendor",
-            Description = "Sells items from the bags for gil, as the inventory's context menu does: 'Sell' while a merchant's shop is " +
+            Description = "Sells items from the bags and the armoury chest for gil, as their context menu does: 'Sell' while a merchant's shop is " +
                           "open (talk to a merchant, open its shop), or 'Have Retainer Sell Items' while a retainer's inventory is open " +
                           "at a summoning bell (open_retainer), which saves walking to a merchant. Whole stacks, smallest first: all of " +
                           "an item, at most 'quantity', or all but 'keep'. Vendors pay little (often 1 to 10 gil each), so check the " +
-                          "market board first (get_market_prices). Items a vendor does not buy are reported and left alone. Untradable items " +
+                          "market board first (get_market_prices). Items a vendor does not buy, and items a gear set uses, are reported and left alone. Untradable items " +
                           "are only sold after the player approves them in game (one question for all of them in the call); declined ones " +
                           "are left alone. A stack the player moved or changed meanwhile is left alone and reported under 'skipped'. Sold items can be bought back: from a merchant's buyback tab until the shop is closed, or from " +
                           "the retainer's \"Item buyback\" until it is dismissed. Before XIV MCP itself closes that shop or dismisses that " +
@@ -93,11 +97,13 @@ internal static class VendorTools
                         if (!CanSell()) throw new ToolException("No shop or retainer inventory is open. Talk to a merchant and open its shop first (navigate_to destination npc or object), or open a retainer at a summoning bell (open_retainer), then sell.");
                         return wanted.Select(w => (Item: Items.Resolve(w.Query), w.Quantity, w.Keep)).ToList();
                     }).ConfigureAwait(false);
-                    var plans = new List<(Lumina.Excel.Sheets.Item Item, List<Stack> Stacks, IReadOnlyList<int> Pick)>();
+                    var plans = new List<(Lumina.Excel.Sheets.Item Item, List<Stack> Stacks, IReadOnlyList<int> Pick, string? Refused)>();
+                    var gearsets = await Game.Run(Gearsets.ItemIds).ConfigureAwait(false);
                     foreach (var (item, quantity, keep) in resolved)
                     {
                         var stacks = await Game.Run(() => StacksOf(item.RowId)).ConfigureAwait(false);
-                        try { plans.Add((item, stacks, VendorSale.Pick(stacks.Select(s => s.Quantity).ToList(), quantity, keep))); }
+                        var refused = VendorSale.Refusal(item.PriceLow > 0, stacks.Sum(s => s.Quantity), gearsets.Contains(item.RowId));
+                        try { plans.Add((item, stacks, refused is null ? VendorSale.Pick(stacks.Select(s => s.Quantity).ToList(), quantity, keep) : [], refused)); }
                         catch (ArgumentOutOfRangeException e) { throw new ToolException($"{item.Name.ExtractText()}: {e.Message}"); }
                     }
                     // Only what would really be sold is asked about.
@@ -112,17 +118,17 @@ internal static class VendorTools
 
                     var gilBefore = await Game.Run(Gil).ConfigureAwait(false);
                     var results = new List<object>();
-                    foreach (var (item, stacks, pick) in plans)
+                    foreach (var (item, stacks, pick, refused) in plans)
                     {
                         var name = item.Name.ExtractText();
-                        if (item.IsUntradable && item.PriceLow > 0 && pick.Count > 0 && !untradableApproved.Contains(item.RowId))
+                        if (refused is not null)
                         {
-                            results.Add(new { item = name, sold = 0, note = "Untradable: the player did not approve selling it in game, so it was left alone." });
+                            results.Add(new { item = name, sold = 0, note = refused });
                             continue;
                         }
-                        if (item.PriceLow == 0)
+                        if (item.IsUntradable && pick.Count > 0 && !untradableApproved.Contains(item.RowId))
                         {
-                            results.Add(new { item = name, sold = 0, note = "Vendors do not buy this item." });
+                            results.Add(new { item = name, sold = 0, note = "Untradable: the player did not approve selling it in game, so it was left alone." });
                             continue;
                         }
                         var sold = 0;
@@ -194,7 +200,7 @@ internal static class VendorTools
     }
 
     /// <summary>
-    /// Sells one stack: its context menu, "Sell", the confirmation if the game asks; waits until it is gone from the bag. Returns
+    /// Sells one stack: its context menu, "Sell", the confirmation if the game asks; waits until it is gone from its slot. Returns
     /// why it was left alone when its slot no longer holds the planned stack (the player may have sorted or moved items while the
     /// approval was open), else null. That is checked in the same frame the context menu opens, so nothing else can be sold.
     /// </summary>
@@ -275,7 +281,9 @@ internal static class VendorTools
     private static unsafe void OpenContextMenu(Stack stack, bool withOwner = true)
     {
         AtkUnitBase* owner = null;
-        foreach (var name in withOwner ? InventoryAddons : [])
+        // The player opens an armoury piece's menu from the armoury chest window (ArmouryBoard), a bag stack's from the inventory.
+        string[] owners = Bags.Contains(stack.Container) ? InventoryAddons : [ArmouryAddon];
+        foreach (var name in withOwner ? owners : [])
         {
             var a = GameWindows.Addon(name);
             if (a != null && a->IsVisible) { owner = a; break; }
@@ -312,7 +320,7 @@ internal static class VendorTools
     {
         var im = InventoryManager.Instance();
         var stacks = new List<Stack>();
-        foreach (var container in Bags)
+        foreach (var container in SellFrom)
         {
             var c = im->GetInventoryContainer(container);
             if (c == null) continue;

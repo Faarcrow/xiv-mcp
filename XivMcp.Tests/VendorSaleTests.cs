@@ -94,4 +94,24 @@ public class VendorSaleTests
         Assert.False(VendorSale.Confirms(materia, SellPrompt, UntradableWarning, sellUntradable: true));
         Assert.False(VendorSale.IsUntradableWarning(materia, UntradableWarning));
     }
+
+    [Fact]
+    public void Items_vendors_do_not_buy_are_refused_first()
+    {
+        Assert.Equal("Vendors do not buy this item.", VendorSale.Refusal(vendorsBuy: false, held: 0, inGearset: true));
+    }
+
+    [Fact]
+    public void Having_none_says_where_it_looked()
+    {
+        // Before, an item only in the saddlebag (or nowhere) came back as "sold 0, left 0" with no word on why.
+        Assert.Equal("None in the bags or the armoury chest.", VendorSale.Refusal(vendorsBuy: true, held: 0, inGearset: false));
+    }
+
+    [Fact]
+    public void Gear_set_pieces_are_never_sold()
+    {
+        Assert.Equal("A gear set uses it, so it is not sold.", VendorSale.Refusal(vendorsBuy: true, held: 1, inGearset: true));
+        Assert.Null(VendorSale.Refusal(vendorsBuy: true, held: 1, inGearset: false));
+    }
 }

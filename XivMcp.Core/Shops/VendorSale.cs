@@ -7,7 +7,7 @@ namespace XivMcp.Shops;
 /// <summary>What a bag slot holds: the item (0 when empty), whether it is high quality, and how many.</summary>
 public readonly record struct SlotContent(uint ItemId, bool Hq, int Quantity);
 
-/// <summary>Which stacks to sell to a vendor. The game sells whole stacks from the inventory's context menu.</summary>
+/// <summary>Which stacks to sell to a vendor. The game sells whole stacks from the context menu of the bags and the armoury chest.</summary>
 public static class VendorSale
 {
     /// <summary>
@@ -30,6 +30,18 @@ public static class VendorSale
     /// </summary>
     public static bool MayConfirmUntradable(SlotContent planned, SlotContent? now, IReadOnlySet<uint> approved) =>
         approved.Contains(planned.ItemId) && Changed(planned, now) is null;
+
+    /// <summary>
+    /// Why none of an item is sold, before its stacks are picked, or null: vendors don't buy it, none is in the bags or the armoury
+    /// chest (<paramref name="held"/> counts both), or a gear set uses it, so selling by name could take a piece the player wears.
+    /// </summary>
+    public static string? Refusal(bool vendorsBuy, int held, bool inGearset) => (vendorsBuy, held, inGearset) switch
+    {
+        (false, _, _) => "Vendors do not buy this item.",
+        (_, 0, _) => "None in the bags or the armoury chest.",
+        (_, _, true) => "A gear set uses it, so it is not sold.",
+        _ => null,
+    };
 
     /// <summary>
     /// The indexes of the stacks to sell, smallest first (so the big stacks are what stays): all of them, at most
