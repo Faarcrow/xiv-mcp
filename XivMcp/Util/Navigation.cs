@@ -57,6 +57,17 @@ internal static class Navigation
     public static void GoToInn() =>
         Svc.PluginInterface.GetIpcSubscriber<int?, object>("Lifestream.EnqueueInnShortcut").InvokeAction(null);
 
+    /// <summary>
+    /// Takes the aethernet from the shard the player stands at (within about 4.6 yalms) to the shard of that name (PlaceName row). True
+    /// means Lifestream took the request, not that the trip happened: the destination may be missing from the shard's menu.
+    /// </summary>
+    public static bool AethernetTo(uint placeName) =>
+        Svc.PluginInterface.GetIpcSubscriber<uint, bool>("Lifestream.AethernetTeleportByPlaceNameId").InvokeFunc(placeName);
+
+    /// <summary>Uses the Foundation's aetheryte, within reach, to travel to the Firmament. True means Lifestream took the request.</summary>
+    public static bool AethernetToFirmament() =>
+        Svc.PluginInterface.GetIpcSubscriber<bool>("Lifestream.AethernetTeleportToFirmament").InvokeFunc();
+
     public static bool CanMoveToWorkshop => LifestreamLoaded && Func<bool>("Lifestream.CanMoveToWorkshop");
 
     public static void MoveToWorkshop() => Svc.PluginInterface.GetIpcSubscriber<object>("Lifestream.MoveToWorkshop").InvokeAction();

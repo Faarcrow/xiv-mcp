@@ -117,7 +117,7 @@ public sealed class Plugin : IDalamudPlugin
             .Append(VentureTools.RecallTool(Config, compat))
             .Concat(CraftPlanTools.Create(Config, retainers))
             .Concat(LongRunningTools.Create(Config))
-            .Concat(DutyTools.Create(Config, () => jobs!, () => Server?.LastClient))
+            .Concat(DutyTools.Create(Config, () => jobs!, CallingClient))
             .Concat(GearsetTools.Create(Config))
             .Append(NavigationTools.FarmMonsterDropsTool(Config))
             .Concat(MarketTools.Create(Config, retainers, sales, compat))
@@ -125,18 +125,18 @@ public sealed class Plugin : IDalamudPlugin
             .Concat(WindowInspectTools.Create())
             .Concat(CacheTools.Create(caches))
             .Append(SelfTest.Tool())
-            .Concat(JobTools.Create(() => jobs!, () => Server?.LastClient))
-            .Concat(MapTools.Create(() => jobs!, () => Server?.LastClient))
+            .Concat(JobTools.Create(() => jobs!, CallingClient))
+            .Concat(MapTools.Create(() => jobs!, CallingClient))
             .Concat(DyeTools.Create())
             .Concat(MeldTools.Create())
             .Concat(DesynthTools.Create())
             .Concat(MarketBoardTools.Create(Config))
-            .Concat(FashionTools.Create(Config, retainers, () => jobs!, () => Server?.LastClient))
-            .Concat(SaucyTools.Create(Config, () => jobs!, () => Server?.LastClient))
-            .Concat(AutoHookTools.Create(Config, () => jobs!, () => Server?.LastClient))
-            .Concat(QuestionableTools.Create(() => jobs!, () => Server?.LastClient))
-            .Concat(OceanFishingTools.Create(Config, () => jobs!, () => Server?.LastClient))
-            .Concat(CustomDeliveryTools.Create(Config, () => jobs!, () => Server?.LastClient))
+            .Concat(FashionTools.Create(Config, retainers, () => jobs!, CallingClient))
+            .Concat(SaucyTools.Create(Config, () => jobs!, CallingClient))
+            .Concat(AutoHookTools.Create(Config, () => jobs!, CallingClient))
+            .Concat(QuestionableTools.Create(() => jobs!, CallingClient))
+            .Concat(OceanFishingTools.Create(Config, () => jobs!, CallingClient))
+            .Concat(CustomDeliveryTools.Create(Config, () => jobs!, CallingClient))
             .Concat(XivMcpWindowTools.Create(() => configWindow, () => overlayWindow, () => jobs, pluginInterface.IsDev, () => Config.EnableDevTools))
             .ToList();
         // Tools that drive one other plugin belong to that plugin's integration (same provider + capability contract as third-party tools).
@@ -194,6 +194,12 @@ public sealed class Plugin : IDalamudPlugin
         if (Config.ServerEnabled) Server.Start();
         pluginApi.AnnounceReady(); // plugins that loaded before us register their tools now
     }
+
+    /// <summary>
+    /// The client a job started by the tool call running now belongs to: with several clients connected, the last one to connect is
+    /// not necessarily the caller, and a plugin's job keeps its jobs.
+    /// </summary>
+    private string? CallingClient() => XivMcp.Permissions.CallScope.JobClient(Server?.LastClient);
 
     private void OnCommand(string command, string arguments)
     {

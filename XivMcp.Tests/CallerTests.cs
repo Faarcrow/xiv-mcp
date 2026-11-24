@@ -123,6 +123,19 @@ public class CallerTests
     }
 
     [Fact]
+    public async Task The_tool_learns_whether_it_runs_as_a_job_step()
+    {
+        // A direct call has to answer before the AI app gives up on it; a job step can wait for as long as its work takes.
+        store.Core.Set("game_navigation", Access.Write, PolicyMode.Allow);
+        bool? inJob = null;
+        var tool = new McpTool { Name = "navigate_to", Description = "d", ReadOnly = false, Handler = (a, _) => { inJob = a.InJob; return Task.FromResult<object?>(null); } };
+        await Gate().InvokeAsync(tool, Args(), default);
+        Assert.False(inJob);
+        await Gate().InvokeAsync(tool, Args(), default, inJob: true);
+        Assert.True(inJob);
+    }
+
+    [Fact]
     public async Task Helpers_deep_inside_a_call_know_who_called()
     {
         // Recovery, run from inside navigate_to, asks the player before closing a shop: it must not answer with the AI's approvals for a plugin.
@@ -139,6 +152,30 @@ public class CallerTests
         await Gate().InvokeAsync(tool, Args(), default);
         Assert.Equal("assistant", seen!.ApprovalOwner);
         Assert.Null(CallScope.Current); // only during the call
+    }
+
+    [Fact]
+    public async Task A_job_started_inside_a_call_belongs_to_whoever_made_the_call()
+    {
+        // Regression: jobs were recorded under the client that connected last (a second client, such as a script that only reads
+        // jobs, then got the assistant's jobs), and a job a plugin's job starts was recorded as the assistant's, so its steps ran
+        // with the assistant's permissions instead of the plugin's.
+        store.Core.Set("game_navigation", Access.Write, PolicyMode.Allow);
+        EnablePlugin(p => p.Modes[Capabilities.MoveCharacter] = PolicyMode.Allow);
+        string? recorded = null;
+        var tool = new McpTool
+        {
+            Name = "navigate_to", Description = "d", ReadOnly = false,
+            Handler = async (_, _) => { await Task.Yield(); recorded = CallScope.JobClient(fallback: "xivmcp-wait-job"); return null; },
+        };
+        await Gate().InvokeAsync(tool, Args(), default, caller: Caller.Assistant("opencode 2.3.0"));
+        Assert.Equal("opencode 2.3.0", recorded);
+        await Gate().InvokeAsync(tool, Args(), default, inJob: true, caller: FromPlugin);
+        Assert.Equal("plugin:HelloMcp", recorded);
+        await Gate().InvokeAsync(tool, Args(), default, caller: Caller.Assistant());
+        Assert.Equal("xivmcp-wait-job", recorded);
+        Assert.Equal("xivmcp-wait-job", CallScope.JobClient(fallback: "xivmcp-wait-job")); // outside a call
+        Assert.Equal("a:b", Caller.Assistant("a:b").Client);
     }
 
     [Fact]

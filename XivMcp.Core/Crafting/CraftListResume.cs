@@ -12,10 +12,13 @@ public sealed record RecipeCount(uint RecipeId, int Crafts);
 /// <summary>
 /// What a crafting-list job step remembers between runs: the list as it was first run (<paramref name="Original"/>), what the step
 /// last wrote into the crafting plugin's list (<paramref name="Written"/>; the original until it shrinks it), and the crafts made
-/// so far per recipe id.
+/// so far per recipe id. A craft_item step keeps one too, without a list (<see cref="NoList"/>; see <see cref="CraftItemStep"/>).
 /// </summary>
 public sealed record CraftListMemory(int ListId, List<RecipeCount> Original, List<RecipeCount> Written, Dictionary<uint, int> Done)
 {
+    /// <summary>The list id of a run that has no list (craft_item).</summary>
+    public const int NoList = 0;
+
     public JsonObject ToJson() => new()
     {
         ["listId"] = ListId,

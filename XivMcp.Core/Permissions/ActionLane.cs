@@ -30,7 +30,16 @@ public sealed class ActionLane(Func<DateTime> now)
     private string? running;
     private DateTime since;
 
-    public static bool Needs(McpTool tool) => !tool.ReadOnly && !Exempt.Contains(tool.Name);
+    /// <summary>
+    /// Calls that only stop or pause what runs, picked by their arguments: crafting_control stop/pause must reach Artisan while a
+    /// craft_item waits for it, else the list could not be stopped until the craft is done.
+    /// </summary>
+    private static bool StopsWhatRuns(string tool, ToolArgs? args) =>
+        tool.Equals("crafting_control", StringComparison.OrdinalIgnoreCase) &&
+        args?.String("action")?.ToLowerInvariant() is "stop" or "pause";
+
+    public static bool Needs(McpTool tool, ToolArgs? args = null) =>
+        !tool.ReadOnly && !Exempt.Contains(tool.Name) && !StopsWhatRuns(tool.Name, args);
 
     /// <summary>The tool holding the lane, if any.</summary>
     public string? Running => running;

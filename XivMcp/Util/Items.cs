@@ -82,7 +82,8 @@ internal static class Items
         return count;
     }
 
-    private static readonly InventoryType[] Armoury =
+    /// <summary>The armoury chest's containers, one per equipment slot.</summary>
+    public static readonly InventoryType[] Armoury =
     [
         InventoryType.ArmoryMainHand, InventoryType.ArmoryOffHand, InventoryType.ArmoryHead, InventoryType.ArmoryBody, InventoryType.ArmoryHands,
         InventoryType.ArmoryWaist, InventoryType.ArmoryLegs, InventoryType.ArmoryFeets, InventoryType.ArmoryEar, InventoryType.ArmoryNeck,

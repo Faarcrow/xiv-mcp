@@ -86,9 +86,13 @@ public sealed class CraftListProgress
     public bool SolverHung(DateTime now, TimeSpan limit) =>
         limit > TimeSpan.Zero && solvingSince is { } since && now - since >= limit;
 
-    public string SolverHungMessage(string listName, TimeSpan busy)
+    /// <param name="listName">The list's name; null when one item is crafted a number of times (craft_item).</param>
+    public string SolverHungMessage(string? listName, TimeSpan busy)
     {
         var minutes = Math.Max(1, (int)Math.Round(busy.TotalMinutes));
+        if (listName is null)
+            return $"Artisan's solver hung: it worked for {minutes} minutes on a craft of {recipes[0].Item} (recipe {recipes[0].RecipeId}) without finishing. " +
+                   "Artisan was stopped.";
         var current = Current;
         return $"Artisan's solver hung: it worked for {minutes} minutes on {(current is null ? "the next craft" : $"{current.Item} (recipe {current.RecipeId})")} " +
                $"of '{listName}' without finishing. Artisan was stopped; running the list again continues where it stopped.";
@@ -116,9 +120,16 @@ public sealed class CraftListProgress
     }
 
     /// <summary>Why a stalled list is stuck, naming the entry it stopped at.</summary>
-    public string StallMessage(string listName, TimeSpan idle)
+    /// <param name="listName">The list's name; null when one item is crafted a number of times (craft_item).</param>
+    public string StallMessage(string? listName, TimeSpan idle)
     {
         var minutes = Math.Max(1, (int)Math.Round(idle.TotalMinutes));
+        if (listName is null)
+        {
+            var item = recipes[0];
+            return $"Artisan made no progress on {item.Item} (recipe {item.RecipeId}, {CraftsDone(item.RecipeId)} of {item.Crafts} crafts done) for {minutes} " +
+                   "minutes. Artisan was stopped. Likely causes: missing materials (or the wrong HQ/NQ ones), the wrong job or gear, or a window in the way.";
+        }
         var current = Current;
         if (current is null)
             return $"Artisan made no progress on '{listName}' for {minutes} minutes although every craft seems done; it was stopped.";
@@ -126,6 +137,41 @@ public sealed class CraftListProgress
                    $"{CraftsDone(current.RecipeId)} of {current.Crafts} crafts done). Artisan was stopped. ";
         return head + (GearIngredients.Note(current.GearIngredients)
                        ?? "Likely causes: an ingredient it can't select in the crafting log, missing materials (or the wrong HQ/NQ ones), or a window in the way.");
+    }
+
+    /// <summary>For a job step's error: running the step again does not make the crafts already done once more. Empty when none are done.</summary>
+    public string RunAgainNote()
+    {
+        var done = Done().Values.Sum();
+        return done == 0 ? "" : $" {done} craft(s) are done; running this job step again (retry / resume) continues with the rest instead of crafting them again.";
+    }
+
+    /// <summary>
+    /// Why crafting one item a number of times (a run with one entry) ended with crafts missing, with the likely cause and how to
+    /// get the rest; null when every craft was made.
+    /// </summary>
+    /// <param name="inJob">A job step remembers its crafts, so running it again makes only the rest; a direct call does not.</param>
+    public string? ItemShortfall(bool bagsFull, bool inJob)
+    {
+        if (Current is not { } item) return null;
+        var done = CraftsDone(item.RecipeId);
+        var head = MadeProgressThisRun
+            ? $"Artisan stopped after {done} of {item.Crafts} crafts of {item.Item}."
+            : $"Artisan stopped without crafting {item.Item} ({done} of {item.Crafts} crafts are made).";
+        var cause = bagsFull ? " The bags are full: free some slots first." : " Likely causes: missing materials, or the wrong job or gear.";
+        var rest = done == 0 ? ""
+            : inJob ? RunAgainNote()
+            : $" Calling craft_item with the same amount would craft all of it once more: ask for amount={item.Crafts - done} to get the rest.";
+        return head + cause + rest;
+    }
+
+    /// <summary>A direct call that answers while one item (a run with one entry) is still being crafted: how far it got, and how to wait for the end.</summary>
+    public string ItemStillCrafting()
+    {
+        var item = recipes[0];
+        return $"Artisan is still crafting {item.Item}: {CraftsDone(item.RecipeId)} of {item.Crafts} crafts are made so far. It goes on by itself, and " +
+               "craft_item is refused until it is done (get_crafting_lists shows Artisan busy until then; crafting_control action=stop stops it). " +
+               "To wait for the end, run craft_item as a job step (start_job).";
     }
 }
 

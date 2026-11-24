@@ -13,6 +13,7 @@ using XivMcp.Maps;
 using XivMcp.Mcp;
 using XivMcp.Permissions;
 using XivMcp.Shops;
+using XivMcp.Ui;
 using XivMcp.Util;
 
 namespace XivMcp.Tools;
@@ -36,6 +37,15 @@ internal static class ShopTools
     private static readonly TimeSpan ApprovalQuestionTimeout = TimeSpan.FromMinutes(5);
     private static readonly string[] ShopAddons = ["Shop", "ShopExchangeItem", "ShopExchangeCurrency", "InclusionShop", "GrandCompanyExchange"];
     private static readonly string[] ConfirmAddons = ["ShopExchangeItemDialog", "ShopExchangeCurrencyDialog"];
+
+    /// <summary>
+    /// The prompts whose "Proceed" box XIV MCP ticks (Addon rows): the game's two warnings that the item can't be equipped, "You cannot
+    /// currently equip this item." and "You will never be able to equip this item.", which different windows ask from their own rows
+    /// (a gil shop asked 2436 or 11502 in game). They only warn about the item buy_item was asked to buy; any other prompt with that box
+    /// (bait above the fisher's level, a weapon already owned) is answered No.
+    /// </summary>
+    private static readonly uint[] EquipWarnings = [1939, 1962, 2436, 2437, 11502, 11503];
+
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
     /// <summary>A vendor of the item. GilPrice is set when one of the NPC's own gil shops lists the item.</summary>
@@ -79,7 +89,8 @@ internal static class ShopTools
             Description = "Buys an item from an NPC vendor (needs a vendor-location plugin to know where vendors stand): picks a vendor (gil vendors " +
                           "in a city first, then the current zone, or the one you name), travels there if needed (with the navigation plugins installed, needs 'Game & navigation'), " +
                           "opens the shop through the NPC's menus (also a topic menu in front of the shops) and buys the quantity in batches of up to 99 " +
-                          "(gear, which doesn't stack, one piece at a time), confirming like a player. Checks free " +
+                          "(gear, which doesn't stack, one piece at a time), confirming like a player; on the warning that the item can't be equipped " +
+                          "it ticks the Proceed box. Checks free " +
                           "bag slots (and gil for gil shops) first and verifies what arrived. Gil shops buy directly. Any other shop (tomestones, " +
                           "scrips, seals, items) shows an approval popup in game while its window is open, and only buys when the player clicks " +
                           "Approve. Supported shop windows: gil shops, the common exchange windows and the scrip exchanges with several pages, where " +
@@ -584,6 +595,7 @@ internal static class ShopTools
         var target = before + quantity;
         var failures = 0;
         long? unitCost = null;
+        var warned = false;
         var budget = approval?.Remaining ?? 0;
         // Gear doesn't stack: a gil shop takes it one piece per purchase.
         var stackSize = (int)await Game.Run(() => Items.StackSize(itemId)).ConfigureAwait(false);
@@ -628,7 +640,12 @@ internal static class ShopTools
             while (DateTime.UtcNow < deadline)
             {
                 await Task.Delay(250, ct).ConfigureAwait(false);
-                var now = await Game.Run(() => { ConfirmDialogs(); return Items.CountReceived(itemId); }).ConfigureAwait(false);
+                var (warning, now) = await Game.Run(() => (ConfirmDialogs(), Items.CountReceived(itemId))).ConfigureAwait(false);
+                if (warning is not null && !warned)
+                {
+                    warned = true;
+                    steps.Add($"The game warned: \"{warning.ReplaceLineEndings(" ")}\" Ticked Proceed and confirmed.");
+                }
                 if (now > have)
                 {
                     arrived = true;
@@ -710,16 +727,41 @@ internal static class ShopTools
         return "No shop window is open.";
     }
 
-    private static unsafe void ConfirmDialogs()
+    /// <summary>
+    /// Confirms the shop's dialogs. A prompt that keeps OK greyed out until its "Proceed" box is ticked gets the box ticked, like the
+    /// player's click, when it is one of <see cref="EquipWarnings"/> (returning its text, so the caller can say so); OK follows on a
+    /// later call, once the window enabled it. Any other such prompt is answered No and stops the purchase. Framework thread.
+    /// </summary>
+    private static unsafe string? ConfirmDialogs()
     {
         foreach (var name in ConfirmAddons)
         {
             var dialog = Addon(name);
-            if (dialog != null && dialog->IsVisible) { Fire(dialog, true, 0); return; }
+            if (dialog != null && dialog->IsVisible) { Fire(dialog, true, 0); return null; }
         }
         var yesno = (AddonSelectYesno*)Addon("SelectYesno");
-        if (yesno != null && yesno->AtkUnitBase.IsVisible && yesno->YesButton != null && yesno->YesButton->IsEnabled)
-            Fire(&yesno->AtkUnitBase, true, 0);
+        if (yesno == null || !yesno->AtkUnitBase.IsVisible || yesno->YesButton == null) return null;
+        if (yesno->YesButton->IsEnabled) { Fire(&yesno->AtkUnitBase, true, 0); return null; }
+        var box = yesno->ConfirmCheckBox;
+        if (box == null || box->AtkComponentButton.AtkComponentBase.OwnerNode == null ||
+            !box->AtkComponentButton.AtkComponentBase.OwnerNode->AtkResNode.IsVisible() || box->IsChecked) return null;
+        if (GameWindows.YesNoPrompt() is not { } prompt) return null;
+        if (!EquipWarnings.Any(row => PromptTemplate.Matches(prompt, GameWindows.TemplatePieces(row))))
+        {
+            GameWindows.AnswerYesNo(false);
+            throw new ToolException($"The shop asked \"{prompt.ReplaceLineEndings(" ")}\". buy_item only ticks the Proceed box of the warnings " +
+                                    "that the item cannot be equipped, so it answered No. Buy it by hand if you want it anyway.");
+        }
+        // A mouse click ticks the box itself and then tells the window, which enables OK; the window's event alone leaves it unticked.
+        box->SetChecked(true);
+        if (!VentureTools.Click(&yesno->AtkUnitBase, &box->AtkComponentButton))
+        {
+            box->SetChecked(false);
+            GameWindows.AnswerYesNo(false);
+            throw new ToolException($"The shop asked \"{prompt.ReplaceLineEndings(" ")}\", and its Proceed box could not be ticked, so it answered No. " +
+                                    "Buy it by hand.");
+        }
+        return prompt;
     }
 
     /// <summary>

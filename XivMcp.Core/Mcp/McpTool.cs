@@ -106,6 +106,18 @@ public sealed class ToolArgs(JsonObject? args)
     /// <summary>Who asked for the call (set by the permission gate): tools that hand out or use approvals check it.</summary>
     public XivMcp.Permissions.Caller? Caller { get; set; }
 
+    /// <summary>
+    /// Whether the call runs as a background job step (set by the permission gate). A direct call has to answer before the AI app
+    /// gives up on it (about a minute); a job step may wait for as long as its work takes.
+    /// </summary>
+    public bool InJob { get; set; }
+
+    /// <summary>
+    /// When the call came in (set by the permission gate, before any approval window): the AI app's time limit runs from here, also
+    /// while the player reads the window.
+    /// </summary>
+    public DateTime? CalledUtc { get; set; }
+
     public JsonNode? Node(string name) => args[name];
 
     /// <summary>An array argument; also one sent as a JSON string (clients whose copy of the schema predates the parameter do that).</summary>
