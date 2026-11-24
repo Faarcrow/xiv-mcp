@@ -33,15 +33,25 @@ internal static class VendorTools
     private const uint UntradableWarning = 399;
 
     private static readonly string[] InventoryAddons = ["InventoryExpansion", "InventoryLarge", "Inventory"];
-    private const string ArmouryAddon = "ArmouryBoard";
 
     private static readonly InventoryType[] Bags = [InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4];
 
+    private static readonly InventoryType[] Saddlebag =
+        [InventoryType.SaddleBag1, InventoryType.SaddleBag2, InventoryType.PremiumSaddleBag1, InventoryType.PremiumSaddleBag2];
+
+    /// <summary>A place items are sold from: its containers, and the windows the player right-clicks them in (the menu's owner).</summary>
+    private sealed record Source(InventoryType[] Containers, string[] Windows);
+
     /// <summary>
-    /// Where items are sold from, as the game's context menu allows: the bags first, then the armoury chest (gear bought from a vendor
-    /// often lands there).
+    /// Where items are sold from, in this order, as the game's context menu allows: the bags, the armoury chest (gear bought from a
+    /// vendor often lands there) and the saddlebag. Never what is worn.
     /// </summary>
-    private static readonly InventoryType[] SellFrom = [.. Bags, .. Items.Armoury];
+    private static readonly Source[] Sources =
+    [
+        new(Bags, InventoryAddons),
+        new(Items.Armoury, ["ArmouryBoard"]),
+        new(Saddlebag, ["InventoryBuddy", "InventoryBuddy2"]),
+    ];
 
     public static IEnumerable<McpTool> Create(Configuration config)
     {
@@ -286,8 +296,7 @@ internal static class VendorTools
     private static unsafe void OpenContextMenu(Stack stack, bool withOwner = true)
     {
         AtkUnitBase* owner = null;
-        // The player opens an armoury piece's menu from the armoury chest window (ArmouryBoard), a bag stack's from the inventory.
-        string[] owners = Bags.Contains(stack.Container) ? InventoryAddons : [ArmouryAddon];
+        var owners = Sources.First(s => s.Containers.Contains(stack.Container)).Windows;
         foreach (var name in withOwner ? owners : [])
         {
             var a = GameWindows.Addon(name);
@@ -325,7 +334,7 @@ internal static class VendorTools
     {
         var im = InventoryManager.Instance();
         var stacks = new List<Stack>();
-        foreach (var container in SellFrom)
+        foreach (var container in Sources.SelectMany(s => s.Containers))
         {
             var c = im->GetInventoryContainer(container);
             if (c == null) continue;
