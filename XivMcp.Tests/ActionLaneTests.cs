@@ -95,6 +95,35 @@ public class ActionLaneTests
         Assert.Equal("ran", await gate.InvokeAsync(Tool("deploy_submersible"), Args(), default));
     }
 
+    [Theory]
+    [InlineData("stop")]
+    [InlineData("pause")]
+    public async Task Stopping_or_pausing_the_crafting_list_gets_through_while_a_craft_waits(string action)
+    {
+        var release = new TaskCompletionSource();
+        var craft = gate.InvokeAsync(Tool("craft_item", body: () => release.Task), Args(), default);
+
+        var args = new ToolArgs(new JsonObject { ["action"] = action });
+        Assert.Equal("ran", await gate.InvokeAsync(Tool("crafting_control"), args, default));
+
+        release.SetResult();
+        await craft;
+    }
+
+    [Fact]
+    public async Task Starting_a_crafting_list_still_waits_for_its_turn()
+    {
+        var release = new TaskCompletionSource();
+        var craft = gate.InvokeAsync(Tool("craft_item", body: () => release.Task), Args(), default);
+
+        var args = new ToolArgs(new JsonObject { ["action"] = "start_list" });
+        var ex = await Assert.ThrowsAsync<ToolException>(() => gate.InvokeAsync(Tool("crafting_control"), args, default));
+        Assert.StartsWith("craft_item is still running", ex.Message);
+
+        release.SetResult();
+        await craft;
+    }
+
     [Fact]
     public async Task Third_party_tools_that_act_take_their_turn_too()
     {

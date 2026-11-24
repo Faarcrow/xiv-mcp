@@ -105,6 +105,8 @@ public sealed class ToolGate(IPolicyStore store, IApprovalGate gate, IGameProbe 
     {
         caller ??= Caller.Assistant();
         args.Caller = caller;
+        args.InJob = inJob;
+        args.CalledUtc = now();
         // Flows into everything this call awaits, and ends with this (async) method.
         CallScope.Current = caller;
         if (tool.Provider.Trust != ProviderTrust.ThirdParty) return await InvokeBuiltInAsync(tool, args, ct, inJob, caller).ConfigureAwait(false);
@@ -414,7 +416,7 @@ public sealed class ToolGate(IPolicyStore store, IApprovalGate gate, IGameProbe 
     /// <summary>Runs the handler; calls that act in the game take their turn first (a job step waits for it, others are refused).</summary>
     private async Task<object?> Run(McpTool tool, ToolArgs args, CancellationToken ct, bool inJob)
     {
-        if (!ActionLane.Needs(tool)) return await tool.Handler(args, ct).ConfigureAwait(false);
+        if (!ActionLane.Needs(tool, args)) return await tool.Handler(args, ct).ConfigureAwait(false);
         using var turn = await Lane.EnterAsync(tool.Name, wait: inJob, ct).ConfigureAwait(false);
         return await tool.Handler(args, ct).ConfigureAwait(false);
     }

@@ -13,9 +13,13 @@ public class ToolGateTests
         public ApprovalDecision Answer { get; set; } = ApprovalDecision.ApprovedOnce;
         public List<ApprovalRequest> Requests { get; } = [];
 
+        /// <summary>What happens while the player reads the window, e.g. time passing.</summary>
+        public Action? WhileAsking { get; set; }
+
         public Task<ApprovalDecision> RequestAsync(ApprovalRequest request, CancellationToken ct)
         {
             Requests.Add(request);
+            WhileAsking?.Invoke();
             return Task.FromResult(Answer);
         }
     }
@@ -208,6 +212,20 @@ public class ToolGateTests
         await g.InvokeAsync(Tool([], readOnly: true), Args(), default);
         await g.InvokeAsync(Tool([], readOnly: true), Args(), default);
         Assert.Equal(Capabilities.ReadGame, Assert.Single(Assert.Single(gate.Requests).Capabilities).Id);
+    }
+
+    [Fact]
+    public async Task A_call_is_stamped_when_it_arrives_before_the_approval_window()
+    {
+        // A direct call's time limit runs from when it came in: the AI app's minute goes on while the player reads the window.
+        store.Core.Set("game_navigation", Access.Write, PolicyMode.Ask);
+        var arrived = now;
+        gate.WhileAsking = () => now = now.AddSeconds(30);
+        DateTime? seen = null;
+        var tool = new McpTool { Name = "navigate_to", Description = "d", ReadOnly = false, Handler = (a, _) => { seen = a.CalledUtc; return Task.FromResult<object?>(null); } };
+        await Gate().InvokeAsync(tool, Args(), default);
+        Assert.Single(gate.Requests);
+        Assert.Equal(arrived, seen);
     }
 
     [Fact]

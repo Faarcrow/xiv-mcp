@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Lumina.Excel.Sheets;
+using XivMcp.Crafting;
 using XivMcp.Mcp;
 using XivMcp.Util;
 
@@ -57,35 +58,93 @@ internal static class CraftGatherTools
         yield return new McpTool
         {
             Name = "craft_item",
-            Description = "Crafts an item a number of times with Artisan (like Artisan's \"craft X\"), by item name/id or recipe id. If several jobs " +
-                          "can craft it, the current job's recipe is preferred. Refuses recipes that use an equipment item as an ingredient: " +
-                          "Artisan can't select those in the crafting log and would hang, so craft them by hand. Requires Artisan and 'Crafting & gathering'.",
+            Description = "Crafts an item a number of times with Artisan (like Artisan's \"craft X\"), by item name/id or recipe id, waits until " +
+                          "Artisan is done and reports the crafts made (counted as the products arrive in the bags). If several jobs can craft " +
+                          "it, the current job's recipe is preferred (when the step runs again, the recipe it used before). It leaves an open " +
+                          "gathering node first; during a fight, a job step waits for it to end and a direct call is refused. As a job step " +
+                          "(start_job) it waits for as long as the crafting takes. It fails (job: pending) when Artisan stops with crafts missing " +
+                          "(missing materials, full bags, wrong job or gear), and when Artisan stays busy without any craft progress for " +
+                          "'stall_minutes' (default 5) or its Raphael solver works on one craft for 3 minutes: Artisan is stopped then (after a " +
+                          "solver hang the job runs the step again by itself). Pausing or cancelling the job stops Artisan too. When the step " +
+                          "runs again (retry, resume, or a new craft_item step with the same item and amount after a failed or skipped one), it " +
+                          "crafts only what is still missing (for a second batch after a failed step, retry or skip that step first, or use another amount). Called directly, it answers when Artisan is done, at the latest about 40 seconds " +
+                          "after the call came in (time on an approval window counts): if Artisan is not done by then, it answers with done=false " +
+                          "and the crafts made so far, and Artisan goes on crafting (craft_item is refused until it is done; crafting_control " +
+                          "action=stop stops it). So more than a few crafts belong in a job step. Refuses recipes that use an equipment item as " +
+                          "an ingredient: Artisan can't select those in the crafting log and would hang, so craft them by hand. Requires Artisan " +
+                          "and 'Crafting & gathering'.",
             InputSchema = """
                 {
                   "type": "object",
                   "properties": {
                     "item": { "type": "string", "description": "Item name or id to craft." },
                     "recipe_id": { "type": "integer", "description": "Exact recipe id (alternative to item)." },
-                    "amount": { "type": "integer", "description": "How many crafts (default 1)." }
+                    "amount": { "type": "integer", "description": "How many crafts (default 1)." },
+                    "stall_minutes": { "type": "integer", "description": "Stop and fail when Artisan is busy but nothing is crafted (no bag count changes) for this long (default 5; 0 = never)." }
                   }
                 }
                 """,
             ReadOnly = false,
-            Handler = (args, _) =>
+            Handler = async (args, ct) =>
             {
                 RequireEnabled();
+                const string tool = "craft_item";
                 var amount = args.Int("amount", 1, 1, 9999);
-                return Game.RunLoggedIn<object?>(() =>
+                var stallAfter = TimeSpan.FromMinutes(args.Int("stall_minutes", 5, 0, 120));
+                // Only a job step remembers its crafts; a direct call never touches step memory.
+                var memory = args.InJob ? CraftListMemory.FromJson(JobManager.Instance?.StepMemory(tool)) : null;
+                await LongRunningTools.ReadyToCraft(ct, waitForFight: args.InJob).ConfigureAwait(false);
+                var started = DateTime.UtcNow;
+                var plan = await Game.RunLoggedIn(() =>
                 {
                     RequireArtisan();
                     EnsureArtisanIdle();
-                    var recipe = ResolveRecipe(args.String("item"), args.UInt("recipe_id"));
+                    var recipe = ResolveRecipe(args.String("item"), args.UInt("recipe_id"), CraftItemStep.RememberedRecipe(memory, amount));
                     // Artisan can't select equipment ingredients and would wait forever without starting the synthesis.
-                    if (XivMcp.Crafting.GearIngredients.Note(CraftPlanner.GearIngredientNames(recipe)) is { } manual)
+                    if (GearIngredients.Note(CraftPlanner.GearIngredientNames(recipe)) is { } manual)
                         throw new ToolException($"Not started: {Excel.Name(recipe.ItemResult)}: {manual}");
-                    Svc.PluginInterface.GetIpcSubscriber<ushort, int, object>("Artisan.CraftItem").InvokeAction((ushort)recipe.RowId, amount);
-                    return new { crafting = DescribeRecipe(recipe.RowId, amount), note = "Artisan takes over now; use crafting_control action=stop to stop it." };
-                });
+                    // Run again after a pause or failure (job resume / retry): Artisan would make every craft once more, so it is
+                    // only asked for the crafts the earlier runs have not made.
+                    var (resume, crafts) = CraftItemStep.Resume(memory, recipe.RowId, amount);
+                    var product = recipe.ItemResult.RowId;
+                    var watched = CraftPlanner.Ingredients(recipe).Select(i => i.Item).Append(product).Distinct().ToList();
+                    var before = watched.ToDictionary(k => k, Items.CountInBags);
+                    if (!resume.AllDone)
+                        Svc.PluginInterface.GetIpcSubscriber<ushort, int, object>("Artisan.CraftItem").InvokeAction((ushort)recipe.RowId, crafts);
+                    var entry = new ListRecipe(recipe.RowId, Items.Name(product), product, amount, Math.Max(1, (int)recipe.AmountResult), []);
+                    return (Entry: entry, Resume: resume, Crafts: crafts, Watched: watched, Before: before);
+                }).ConfigureAwait(false);
+
+                var progress = new CraftListProgress([plan.Entry], plan.Before, started, plan.Resume.Done);
+                Dictionary<uint, int> Counts() => plan.Watched.ToDictionary(k => k, Items.CountInBags);
+                var saved = progress.Done();
+                void Remember(bool force = false)
+                {
+                    if (!args.InJob) return;
+                    var done = progress.Done();
+                    if (!force && done.SequenceEqual(saved)) return;
+                    saved = done;
+                    JobManager.Instance?.SetStepMemory(tool, CraftItemStep.Memory(plan.Entry.RecipeId, amount, done).ToJson());
+                }
+                Remember(force: true);
+                object Result(bool done, string? note) => new
+                {
+                    done, crafted = LongRunningTools.Report(plan.Entry, progress), minutes = Math.Round((DateTime.UtcNow - started).TotalMinutes, 1), note,
+                };
+                if (plan.Resume.AllDone) return Result(true, CraftItemStep.Note(plan.Resume, plan.Crafts));
+
+                // Called directly, the call answers before the AI app stops waiting for it (an answer after that goes nowhere), counted
+                // from when it came in: the time on an approval window counts too. Artisan goes on crafting either way.
+                DateTime? answerBy = args.InJob ? null : (args.CalledUtc ?? started) + CraftRunWatch.DirectCallWait;
+                // Artisan's "craft X" queues its work inside the call above, so it is busy from the start: idle at the first check
+                // means it gave up at once (no materials, no gearset for the job).
+                var watch = new CraftRunWatch(progress, started, stallAfter, answerBy: answerBy, startedRunning: true);
+                var end = await LongRunningTools.FollowArtisan(tool, null, progress, watch, Counts, () => Remember(), ct).ConfigureAwait(false);
+                if (end == CraftRunCheck.Answer) return Result(false, progress.ItemStillCrafting());
+                var free = await Game.Run(Items.FreeBagSlots).ConfigureAwait(false);
+                // Stopping early is a failure: the steps after it would run short of the crafts still missing.
+                if (progress.ItemShortfall(bagsFull: free == 0, args.InJob) is { } shortfall) throw new ToolException(shortfall);
+                return Result(true, CraftItemStep.Note(plan.Resume, plan.Crafts));
             },
         };
 
@@ -519,8 +578,11 @@ internal static class CraftGatherTools
         ?? lists.OfType<JsonObject>().FirstOrDefault(l => string.Equals(l["Name"]?.ToString(), listArg, StringComparison.OrdinalIgnoreCase))
         ?? (lists.OfType<JsonObject>().Where(l => Game.Matches(l["Name"]?.ToString(), listArg)).ToList() is { Count: 1 } one ? one[0] : null);
 
-    /// <summary>A recipe by id, or by item (name or id) — preferring the current job's recipe when several jobs can craft it.</summary>
-    private static Recipe ResolveRecipe(string? item, uint? recipeId)
+    /// <summary>
+    /// A recipe by id, or by item (name or id), preferring <paramref name="remembered"/> (the recipe an earlier run of a craft_item
+    /// step used), then the current job's recipe, when several jobs can craft it.
+    /// </summary>
+    private static Recipe ResolveRecipe(string? item, uint? recipeId, uint? remembered = null)
     {
         var recipes = Svc.Data.GetExcelSheet<Recipe>();
         if (recipeId is { } rid)
@@ -539,8 +601,8 @@ internal static class CraftGatherTools
             throw new ToolException($"'{item}' matches several items: {string.Join(", ", candidates.Select(c => Excel.Name(c.ItemResult)).Distinct().Take(8))}. Be more specific.");
 
         // Recipe.CraftType 0-7 = CRP..CUL = ClassJob 8..15.
-        var currentJob = Svc.PlayerState.ClassJob.RowId;
-        return candidates.FirstOrDefault(c => c.CraftType.RowId + 8 == currentJob) is { RowId: not 0 } mine ? mine : candidates[0];
+        var pick = CraftItemStep.PickRecipe(candidates.Select(c => (c.RowId, c.CraftType.RowId + 8)).ToList(), Svc.PlayerState.ClassJob.RowId, remembered);
+        return candidates.First(c => c.RowId == pick);
     }
 
     internal static object DescribeRecipe(uint recipeId, int quantity)
