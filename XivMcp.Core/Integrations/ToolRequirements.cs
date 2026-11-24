@@ -43,8 +43,8 @@ public static class ToolRequirements
         ["navigate_to"] =
         [
             new("vnavmesh", I, Walk, WalkWithout),
-            new("Lifestream", I, "Teleports you, and enters your house, apartment, inn room or workshop.",
-                "XIV MCP tells you where to teleport or which place to enter, and waits until you are there."),
+            new("Lifestream", I, "Teleports you, takes the aethernet, and enters your house, apartment, inn room or workshop.",
+                "XIV MCP tells you where to teleport, which aethernet shard to take or which place to enter, and waits until you are there."),
         ],
         ["buy_item"] =
         [

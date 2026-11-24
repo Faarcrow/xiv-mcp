@@ -51,6 +51,7 @@ internal static partial class NavigationTools
     /// <summary>Asks the player to teleport (to a shard: to its city's aetheryte, then by aethernet) and waits until they are in the zone.</summary>
     internal static async Task GuideTeleport(uint aetheryteId, bool shard, uint territory, List<string> steps, CancellationToken ct)
     {
+        await WarmLayouts(aetheryteId, ct).ConfigureAwait(false);
         var (message, label) = await Game.Run(() =>
         {
             var sheet = Svc.Data.GetExcelSheet<Aetheryte>();

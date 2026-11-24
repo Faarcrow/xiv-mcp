@@ -6,7 +6,8 @@ namespace XivMcp.Maps;
 /// <param name="Id">Aetheryte row.</param>
 /// <param name="ToTarget">Flat distance from it to the target, if its position is known.</param>
 /// <param name="ToPlayer">Flat distance from it to the player, if the player is in its zone and its position is known.</param>
-public readonly record struct TeleportOption(uint Id, bool IsAetheryte, float? ToTarget, float? ToPlayer);
+/// <param name="Attuned">The character has attuned to it: the game teleports only to attuned aetherytes and shards.</param>
+public readonly record struct TeleportOption(uint Id, bool IsAetheryte, float? ToTarget, float? ToPlayer, bool Attuned = true);
 
 /// <summary>
 /// Which aetheryte or aethernet shard gets the player near a target. Map positions carry no height, so the nearest shard can sit
@@ -26,10 +27,40 @@ public static class TeleportPick
     /// <returns>The option to travel to, or null to walk (on a retry: nothing else is left).</returns>
     public static TeleportOption? Choose(IReadOnlyList<TeleportOption> options, float? playerToTarget, bool retry, ICollection<uint> tried)
     {
-        var candidates = options.Where(o => !tried.Contains(o.Id) && !(retry && o.ToPlayer < StandingAt)).ToList();
+        var candidates = options.Where(o => o.Attuned && !tried.Contains(o.Id) && !(retry && o.ToPlayer < StandingAt)).ToList();
         if (candidates.Count == 0) return null;
         var best = candidates.OrderBy(o => o.ToTarget ?? float.MaxValue).ThenByDescending(o => o.IsAetheryte).First();
         if (!retry && playerToTarget is { } walk && walk <= (best.ToTarget ?? float.MaxValue) + WalkSlack) return null;
         return best;
     }
+
+    /// <summary>The zone has aetherytes or shards, but the character has attuned to none of them.</summary>
+    public static bool NoneAttuned(IReadOnlyList<TeleportOption> options) => options.Count > 0 && !options.Any(o => o.Attuned);
+}
+
+/// <summary>A zone with aetherytes or shards of one aethernet group: its territory, intended use, and whether the group's main aetheryte stands there.</summary>
+public readonly record struct AethernetZone(uint Territory, uint IntendedUse, bool HasMain);
+
+/// <summary>Whether the character can travel to an aetheryte or aethernet shard.</summary>
+public static class AetheryteAccess
+{
+    /// <summary>
+    /// The zones of an aethernet group that are its city: those of the same kind (intended use) as the main aetheryte's zone, such as
+    /// both Gridanias or the Gold Saucer and Chocobo Square. Most groups also have destinations in field zones (the city gates, Radz-at-Han's
+    /// The Gate of First Sight in Thavnair, Gangos); being in such a zone is not being in the city.
+    /// </summary>
+    public static IReadOnlySet<uint> CityZones(IEnumerable<AethernetZone> zones)
+    {
+        var list = zones.ToList();
+        var main = list.Where(z => z.HasMain).Select(z => (uint?)z.IntendedUse).FirstOrDefault();
+        return list.Where(z => main is null ? z.HasMain : z.IntendedUse == main).Select(z => z.Territory).ToHashSet();
+    }
+
+    /// <summary>
+    /// An aetheryte: once attuned. An aethernet shard: once attuned, and from outside its city only when the city's own aetheryte is
+    /// attuned too, since getting there means teleporting to that aetheryte first and taking the aethernet from it.
+    /// </summary>
+    /// <param name="inCity">The player is in one of the city zones of the shard's aethernet group (see <see cref="CityZones"/>).</param>
+    public static bool Usable(bool isAetheryte, bool attuned, bool cityAttuned, bool inCity) =>
+        attuned && (isAetheryte || inCity || cityAttuned);
 }

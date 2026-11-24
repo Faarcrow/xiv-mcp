@@ -24,6 +24,33 @@ public class PlayerGuidanceTests
         Assert.Contains("The Aftcastle", withShard);
     }
 
+    [Fact]
+    public void A_zone_aethernet_jump_names_both_shards_and_the_flag()
+    {
+        var text = PlayerGuidance.UseShard("Western Risensong Quarter", "The New Nest", "The Firmament");
+        Assert.Contains("Western Risensong Quarter", text);
+        Assert.Contains("The New Nest", text);
+        Assert.Contains("The Firmament", text);
+        Assert.Contains("flag", text);
+    }
+
+    [Fact]
+    public void Standing_at_the_shard_only_the_destination_is_asked_for()
+    {
+        var text = PlayerGuidance.UseShardHere("Western Risensong Quarter", "The New Nest");
+        Assert.Contains("Western Risensong Quarter", text);
+        Assert.Contains("The New Nest", text);
+        Assert.DoesNotContain("flag", text);
+    }
+
+    [Fact]
+    public void Entering_a_district_names_the_aetheryte_and_the_district()
+    {
+        var text = PlayerGuidance.EnterThrough("Foundation", "The Firmament");
+        Assert.StartsWith("Teleport to Foundation", text);
+        Assert.Contains("travel to The Firmament", text);
+    }
+
     [Theory]
     [InlineData("inn", "inn room")]
     [InlineData("lifestream", "inn room")]
@@ -55,6 +82,9 @@ public class PlayerGuidanceTests
         {
             PlayerGuidance.WalkTo("Summoning Bell", "Mist", 10, 10),
             PlayerGuidance.TeleportTo("Mist", "Mist", "Mist Shard"),
+            PlayerGuidance.UseShard("Featherfall", "Hoarfrost Hall", "The Firmament"),
+            PlayerGuidance.UseShardHere("Featherfall", "Hoarfrost Hall"),
+            PlayerGuidance.EnterThrough("Foundation", "The Firmament"),
             PlayerGuidance.OpenShop("Grade 8 Tincture of Strength"),
             PlayerGuidance.FindAppraiser,
             PlayerGuidance.VisitWorld("Exampleworld", "Exampledc", true),

@@ -51,24 +51,26 @@ internal static partial class NavigationTools
         // Map positions have no height: the nearest shard (or the spot the player stands at) can be on a level the NPC can't be
         // walked to from. Then travel once more, by another aetheryte or shard.
         var tried = new HashSet<uint>();
+        var unreachable = new HashSet<uint>();
         try
         {
-            return await GoToNpcOnce(spot, steps, retry: false, tried, ct).ConfigureAwait(false);
+            return await GoToNpcOnce(spot, steps, retry: false, tried, unreachable, ct).ConfigureAwait(false);
         }
         catch (ToolException ex) when (ex.Message.Contains("runs into an obstacle", StringComparison.Ordinal) ||
                                        ex.Message.StartsWith("vnavmesh could not find a path", StringComparison.Ordinal))
         {
             steps.Add($"{ex.Message} Travelling there by another aetheryte or shard.");
-            return await GoToNpcOnce(spot, steps, retry: true, tried, ct).ConfigureAwait(false);
+            return await GoToNpcOnce(spot, steps, retry: true, tried, unreachable, ct).ConfigureAwait(false);
         }
     }
 
-    private static async Task<object> GoToNpcOnce(NpcSpot spot, List<string> steps, bool retry, HashSet<uint> tried, CancellationToken ct)
+    private static async Task<object> GoToNpcOnce(NpcSpot spot, List<string> steps, bool retry, HashSet<uint> tried, HashSet<uint> unreachable,
+                                                  CancellationToken ct)
     {
         // Already close enough to see it?
         if (!retry && await WalkTo(spot.Name, o => o.BaseId == spot.NpcId, steps, ct).ConfigureAwait(false) is { } near) return near;
 
-        await TravelNear(spot, steps, ct, retry, tried).ConfigureAwait(false);
+        await TravelNear(spot, steps, ct, retry, tried, unreachable).ConfigureAwait(false);
 
         if (await WalkTo(spot.Name, o => o.BaseId == spot.NpcId, steps, ct).ConfigureAwait(false) is { } arrived) return arrived;
 
@@ -94,10 +96,32 @@ internal static partial class NavigationTools
     /// Gets into the zone of <paramref name="spot"/>, near it: with Lifestream by teleport or aethernet, otherwise by asking the player
     /// to teleport and waiting. Does nothing when walking from where the player is would be as quick.
     /// </summary>
-    internal static async Task TravelNear(NpcSpot spot, List<string> steps, CancellationToken ct, bool retry = false, ICollection<uint>? tried = null)
+    /// <param name="unreachable">In a zone with its own aethernet, the shards the player could not walk to, so a retry boards elsewhere.</param>
+    internal static async Task TravelNear(NpcSpot spot, List<string> steps, CancellationToken ct, bool retry = false, ICollection<uint>? tried = null,
+                                          ICollection<uint>? unreachable = null)
     {
+        // Zones with their own aethernet that the Aetheryte sheet does not list (the Firmament, Cosmic Exploration, Eureka, Bozja, ...).
+        // The field operations among them (Eureka, Bozja, Zadnor, the Occult Crescent) are duties (Eureka Anemos sets BoundByDuty and
+        // BoundByDuty56), where EnsureCanTravel refuses before this runs.
+        var shards = await Task.Run(() => ShardNetworks.Of(spot.Territory), ct).ConfigureAwait(false);
+        if (shards.Count > 0)
+        {
+            if (await Game.Run(() => Svc.ClientState.TerritoryType != spot.Territory).ConfigureAwait(false))
+            {
+                var entry = await Task.Run(() => ShardNetworks.Entry(spot.Territory), ct).ConfigureAwait(false)
+                            ?? throw new ToolException(await Task.Run(() => ShardNetworks.IsDuty(spot.Territory), ct).ConfigureAwait(false)
+                                ? $"{TerritoryName(spot.Territory)} is a duty: enter it through the game first. XIV MCP does not travel or walk inside a duty."
+                                : $"{TerritoryName(spot.Territory)} has no aetheryte to travel to; go there first, then retry.");
+                await EnterThroughAethernet(spot, entry.Aetheryte, entry.Quest, steps, ct).ConfigureAwait(false);
+            }
+            await CrossZone(spot, shards, steps, ct, retry, tried, unreachable).ConfigureAwait(false);
+            return;
+        }
+
+        // The zone's layout is read the first time it is needed; read it here, not on the framework thread.
+        await Task.Run(() => ZoneLayout.Warm(spot.Territory), ct).ConfigureAwait(false);
         var plan = await Game.Run(() => PlanTeleport(spot, retry, tried)).ConfigureAwait(false);
-        if (plan is null && retry) throw new ToolException($"No other aetheryte or aethernet shard leads to {spot.Name}.");
+        if (plan is null && retry) throw new ToolException($"No other attuned aetheryte or aethernet shard leads to {spot.Name}.");
         if (plan is { } chosen) tried?.Add(chosen.AetheryteId);
         if (plan is null) steps.Add(await Game.Run(() => WalkReason(spot)).ConfigureAwait(false));
         if (plan is not null && !LifestreamLoaded)
@@ -121,7 +145,7 @@ internal static partial class NavigationTools
                 if (plan.Value.Shard && target.AethernetGroup != 0)
                 {
                     var here = Svc.ClientState.TerritoryType;
-                    var inCity = sheet.Any(a => a.AethernetGroup == target.AethernetGroup && a.Territory.RowId == here);
+                    var inCity = CityZonesOf(target.AethernetGroup).Contains(here);
                     var shared = sheet.Any(a => a.RowId != target.RowId && a.AethernetName.RowId != 0 && a.AethernetGroup != target.AethernetGroup &&
                                                 string.Equals(Excel.Name(a.AethernetName), plan.Value.Label, StringComparison.OrdinalIgnoreCase));
                     ambiguous = shared && !inCity;
@@ -137,13 +161,7 @@ internal static partial class NavigationTools
                 var whereTo = exit.CityName ?? plan.Value.Label;
                 if (!teleported) throw new ToolException($"The teleport to {whereTo} was refused (is the aetheryte attuned, is there enough gil?).");
                 steps.Add(exit.FromInn ? $"Teleported out of the inn room to {whereTo}." : $"Teleported to {whereTo} (other cities have a shard named {plan.Value.Label} too).");
-                var left = DateTime.UtcNow + TimeSpan.FromSeconds(30);
-                while (await Game.Run(() => Svc.ClientState.TerritoryType).ConfigureAwait(false) == room)
-                {
-                    if (DateTime.UtcNow > left) throw new ToolException($"The teleport to {whereTo} did not happen (interrupted?).");
-                    await Task.Delay(250, ct).ConfigureAwait(false);
-                }
-                await WaitUntilSettled(ct).ConfigureAwait(false);
+                await WaitForTeleport(room, whereTo, ct).ConfigureAwait(false);
                 if (!exit.Plan.ThenAethernet)
                 {
                     if (await Game.Run(() => Svc.ClientState.TerritoryType).ConfigureAwait(false) != spot.Territory)
@@ -180,6 +198,18 @@ internal static partial class NavigationTools
         }
     }
 
+    /// <summary>Waits until a teleport that was accepted has left the zone <paramref name="from"/> (30 seconds at most), and the new zone has loaded.</summary>
+    private static async Task WaitForTeleport(uint from, string whereTo, CancellationToken ct)
+    {
+        var left = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (await Game.Run(() => Svc.ClientState.TerritoryType).ConfigureAwait(false) == from)
+        {
+            if (DateTime.UtcNow > left) throw new ToolException($"The teleport to {whereTo} did not happen (interrupted?).");
+            await Task.Delay(250, ct).ConfigureAwait(false);
+        }
+        await WaitUntilSettled(ct).ConfigureAwait(false);
+    }
+
     /// <summary>Teleports with the game's own teleport, as the Teleport window does. Framework thread.</summary>
     private static unsafe bool GameTeleport(uint aetheryteId) =>
         FFXIVClientStructs.FFXIV.Client.Game.UI.Telepo.Instance()->Teleport(aetheryteId, 0);
@@ -194,18 +224,59 @@ internal static partial class NavigationTools
         }
     }
 
-    /// <summary>Why travel walks instead of teleporting: how far the player is, and the nearest aetheryte or shard with a known position.</summary>
-    private static string WalkReason(NpcSpot spot)
+    /// <summary>
+    /// Why travel walks instead of teleporting: how far the player is, and the nearest aetheryte or shard with a known position. In a zone
+    /// with its own network (<paramref name="network"/>), the shards the player can use, and the jump that would have been the best one.
+    /// </summary>
+    private static string WalkReason(NpcSpot spot, IReadOnlyList<XivMcp.Maps.Shard>? network = null, IReadOnlyList<XivMcp.Maps.Shard>? usable = null)
     {
+        if (network is { Count: > 0 } && Svc.Objects.LocalPlayer is { } me)
+        {
+            var walk = Flat(me.Position, spot.Position);
+            usable ??= network;
+            if (usable.Count < 2)
+                return $"Walking: {walk:0} yalms to {spot.Name}; {usable.Count} of the zone's {network.Count} aethernet shards can be used by this character.";
+            var board = usable.MinBy(s => Flat(s.Position, me.Position))!;
+            var end = usable.Where(s => s.Id != board.Id).MinBy(s => Flat(s.Position, spot.Position))!;
+            return $"Walking: {walk:0} yalms to {spot.Name}; the aethernet would not save enough (nearest shard {board.Name} is " +
+                   $"{Flat(board.Position, me.Position):0} yalms away, {end.Name} is {Flat(end.Position, spot.Position):0} yalms from {spot.Name}).";
+        }
         var known = Svc.Data.GetExcelSheet<Aetheryte>()
             .Where(a => a.Territory.RowId == spot.Territory && (a.IsAetheryte || a.AethernetName.RowId != 0))
-            .Select(a => (Name: a.IsAetheryte ? Excel.Name(a.PlaceName) : Excel.Name(a.AethernetName), Pos: AetherytePosition(a)))
+            .Select(a => (Name: a.IsAetheryte ? Excel.Name(a.PlaceName) : Excel.Name(a.AethernetName), Pos: AetherytePosition(a), Usable: Usable(a)))
             .ToList();
-        var located = known.Where(k => k.Pos is not null).Select(k => (k.Name, Distance: Flat(k.Pos!.Value, spot.Position))).OrderBy(k => k.Distance).ToList();
+        var located = known.Where(k => k.Pos is not null).Select(k => (k.Name, k.Usable, Distance: Flat(k.Pos!.Value, spot.Position))).OrderBy(k => k.Distance).ToList();
+        var attuned = located.Where(k => k.Usable).ToList();
         var player = Svc.Objects.LocalPlayer is { } p ? Flat(p.Position, spot.Position) : float.NaN;
+        var nearer = located.Count > 0 && !located[0].Usable ? $" {located[0].Name} is nearer ({located[0].Distance:0} yalms) but not attuned." : "";
         return $"Walking: {player:0} yalms to {spot.Name}; " + (located.Count == 0
             ? $"none of the zone's {known.Count} aetherytes/shards has a known position."
-            : $"nearest is {located[0].Name} ({located[0].Distance:0} yalms from it; {located.Count} of {known.Count} located).");
+            : attuned.Count == 0
+                ? $"none of the zone's aetherytes/shards near it is attuned.{nearer}"
+                : $"nearest attuned is {attuned[0].Name} ({attuned[0].Distance:0} yalms from it; {located.Count} of {known.Count} located).{nearer}");
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<uint, IReadOnlySet<uint>> CityZoneCache = new();
+
+    /// <summary>The zones of an aethernet group that are its city (<see cref="XivMcp.Maps.AetheryteAccess.CityZones"/>).</summary>
+    private static IReadOnlySet<uint> CityZonesOf(uint group) => CityZoneCache.GetOrAdd(group, g =>
+        XivMcp.Maps.AetheryteAccess.CityZones(Svc.Data.GetExcelSheet<Aetheryte>()
+            .Where(o => o.AethernetGroup == g && o.Territory.RowId != 0).GroupBy(o => o.Territory.RowId)
+            .Select(z => new XivMcp.Maps.AethernetZone(z.Key,
+                Svc.Data.GetExcelSheet<TerritoryType>().GetRowOrDefault(z.Key)?.TerritoryIntendedUse.RowId ?? 0, z.Any(o => o.IsAetheryte)))));
+
+    /// <summary>
+    /// Whether the character can travel to this aetheryte or shard now: attuned, and a shard outside the player's city only when its
+    /// city's aetheryte is attuned too (<see cref="XivMcp.Maps.AetheryteAccess.Usable"/>). Framework thread.
+    /// </summary>
+    private static unsafe bool Usable(Aetheryte a)
+    {
+        var ui = FFXIVClientStructs.FFXIV.Client.Game.UI.UIState.Instance();
+        bool Unlocked(uint id) => ui == null || ui->IsAetheryteUnlocked(id);
+        if (a.IsAetheryte || a.AethernetGroup == 0) return Unlocked(a.RowId);
+        var city = Svc.Data.GetExcelSheet<Aetheryte>().FirstOrDefault(o => o.IsAetheryte && o.AethernetGroup == a.AethernetGroup);
+        return XivMcp.Maps.AetheryteAccess.Usable(false, Unlocked(a.RowId), city.RowId == 0 || Unlocked(city.RowId),
+                                                  CityZonesOf(a.AethernetGroup).Contains(Svc.ClientState.TerritoryType));
     }
 
     /// <summary>
@@ -223,9 +294,11 @@ internal static partial class NavigationTools
             return inZone ? null : throw new ToolException($"{TerritoryName(spot.Territory)} has no aetheryte to travel to; go there first, then retry.");
 
         var options = rows.Values.Select(a => AetherytePosition(a) is { } pos
-                ? new XivMcp.Maps.TeleportOption(a.RowId, a.IsAetheryte, Flat(pos, spot.Position), player is { } pp ? Flat(pos, pp) : null)
-                : new XivMcp.Maps.TeleportOption(a.RowId, a.IsAetheryte, null, null))
+                ? new XivMcp.Maps.TeleportOption(a.RowId, a.IsAetheryte, Flat(pos, spot.Position), player is { } pp ? Flat(pos, pp) : null, Usable(a))
+                : new XivMcp.Maps.TeleportOption(a.RowId, a.IsAetheryte, null, null, Usable(a)))
             .ToList();
+        if (!inZone && XivMcp.Maps.TeleportPick.NoneAttuned(options))
+            throw new ToolException($"This character cannot teleport to {TerritoryName(spot.Territory)} yet: none of its aetherytes is attuned (an aethernet shard also needs its city's aetheryte). Go there once and attune to it (some places open with a quest), then retry.");
         var choice = XivMcp.Maps.TeleportPick.Choose(options, player is { } pl ? Flat(pl, spot.Position) : null, retry, tried ?? []);
         if (choice is not { } c) return null;
         var best = rows[c.Id];
@@ -233,13 +306,33 @@ internal static partial class NavigationTools
         return (best.RowId, Excel.Name(best.AethernetName) ?? $"aethernet {best.RowId}", true);
     }
 
+    /// <summary>
+    /// Reads, off the framework thread, the layouts of the zones that <see cref="AetherytePosition"/> will look at for this aetheryte or
+    /// shard: its own zone and that of its city's main aetheryte.
+    /// </summary>
+    internal static Task WarmLayouts(uint aetheryteId, CancellationToken ct) => Task.Run(() =>
+    {
+        var sheet = Svc.Data.GetExcelSheet<Aetheryte>();
+        if (sheet.GetRowOrDefault(aetheryteId) is not { } row) return;
+        ZoneLayout.Warm(row.Territory.RowId);
+        if (row.AethernetGroup != 0 && sheet.FirstOrDefault(a => a.IsAetheryte && a.AethernetGroup == row.AethernetGroup) is { RowId: not 0 } city)
+            ZoneLayout.Warm(city.Territory.RowId);
+    }, ct);
+
     internal static Vector3? AetherytePosition(Aetheryte a)
     {
-        foreach (var level in a.Level)
-            if (level.RowId != 0 && level.ValueNullable is { } l) return new Vector3(l.X, l.Y, l.Z);
-        // Aetherytes and aethernet shards often have no Level row; their map marker gives the position. Shards have no map of
-        // their own: their marker is on the zone's map. Aetheryte markers point at the aetheryte (data type 3); shard markers are
-        // plain markers named after the shard (in Solution Nine: data type 0, the aethernet icon, the shard's place name).
+        Vector3? level = null;
+        foreach (var l in a.Level)
+            if (l.RowId != 0 && l.ValueNullable is { } row) { level = new Vector3(row.X, row.Y, row.Z); break; }
+        return XivMcp.Maps.AetheryteSpot.Choose(ZoneLayout.Aetheryte(a.Territory.RowId, a.RowId), level, () => MarkerPosition(a));
+    }
+
+    /// <summary>Where the map marks an aetheryte or shard that has no object in its zone's layout and no Level row.</summary>
+    private static Vector3? MarkerPosition(Aetheryte a)
+    {
+        // Shards have no map of their own: their marker is on the zone's map. Aetheryte markers point at the aetheryte (data type 3);
+        // shard markers are plain markers named after the shard (in Solution Nine: data type 0, the aethernet icon, the shard's place
+        // name), and in the cities such a name usually labels the district rather than the shard.
         // A shard's Map is row 0, which exists (an empty default row): only take a map that is really set.
         if ((a.Map.RowId != 0 ? a.Map.ValueNullable : a.Territory.ValueNullable?.Map.ValueNullable) is not { } map) return null;
         bool Points(MapMarker m) => m.DataType is 3 or 4 && m.DataKey.RowId == a.RowId;
@@ -251,13 +344,10 @@ internal static partial class NavigationTools
         var found = onMap?.Where(Points).Select(m => (MapMarker?)m).FirstOrDefault()
                     ?? onMap?.Where(Named).Select(m => (MapMarker?)m).FirstOrDefault()
                     ?? Svc.Data.GetSubrowExcelSheet<MapMarker>().SelectMany(m => m).Where(Points).Select(m => (MapMarker?)m).FirstOrDefault();
-        if (found is { } marker)
-        {
-            // MapMarker X/Y are map pixels (0-2048).
-            var scale = map.SizeFactor / 100f;
-            return new Vector3((marker.X - 1024) / scale - map.OffsetX, 0, (marker.Y - 1024) / scale - map.OffsetY);
-        }
-        return null;
+        if (found is not { } marker) return null;
+        // MapMarker X/Y are map pixels (0-2048).
+        var scale = map.SizeFactor / 100f;
+        return new Vector3((marker.X - 1024) / scale - map.OffsetX, 0, (marker.Y - 1024) / scale - map.OffsetY);
     }
 
     /// <summary>Where a map shows markers with this icon (world X/Z; Y unknown, 0). Framework thread.</summary>

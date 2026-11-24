@@ -31,6 +31,18 @@ public static class PlayerGuidance
         ? $"Teleport to {aetheryte} (in {zone})."
         : $"Teleport to {aetheryte}, then take the aethernet to {aethernetShard} (in {zone}).";
 
+    /// <summary>A jump through a zone's own aethernet (the Firmament, Eureka, Bozja, ...), from the shard with the flag.</summary>
+    public static string UseShard(string board, string destination, string zone) =>
+        $"Walk to the aethernet shard at {board} (XIV MCP put the flag on your map in {zone}), then use it to travel to {destination}.";
+
+    /// <summary>The same, once the player stands at the shard (walked there by the walking plugin).</summary>
+    public static string UseShardHere(string board, string destination) =>
+        $"Use the aethernet shard at {board} to travel to {destination}.";
+
+    /// <summary>A district entered from its city's aetheryte, which has no aethernet shard for it (the Firmament from the Foundation).</summary>
+    public static string EnterThrough(string aetheryte, string zone) =>
+        $"Teleport to {aetheryte}, then use the aetheryte there to travel to {zone}.";
+
     /// <summary>Where to go, for the places travel plugins reach ("lifestream" means the preferred property, which without one is the inn).</summary>
     public static string GoTo(string destination) => destination switch
     {
