@@ -33,11 +33,14 @@ public static class VendorSale
 
     /// <summary>
     /// Why none of an item is sold, before its stacks are picked, or null: vendors don't buy it, none is in the bags or the armoury
-    /// chest (<paramref name="held"/> counts both), or a gear set uses it, so selling by name could take a piece a set equips.
+    /// chest (<paramref name="held"/> counts both; <paramref name="inSaddlebag"/>, which the game doesn't sell from, says where the
+    /// rest is), or a gear set uses it, so selling by name could take a piece a set equips.
     /// </summary>
-    public static string? Refusal(bool vendorsBuy, int held, bool inGearset) => (vendorsBuy, held, inGearset) switch
+    public static string? Refusal(bool vendorsBuy, int held, int inSaddlebag, bool inGearset) => (vendorsBuy, held, inGearset) switch
     {
         (false, _, _) => "Vendors do not buy this item.",
+        (_, 0, _) when inSaddlebag > 0 =>
+            $"None in the bags or the armoury chest, but {inSaddlebag} in the saddlebag, which the game does not sell from: move them to the bags first.",
         (_, 0, _) => "None in the bags or the armoury chest.",
         (_, _, true) => "A gear set uses it, so it is not sold.",
         _ => null,

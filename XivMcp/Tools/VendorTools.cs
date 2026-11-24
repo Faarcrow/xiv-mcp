@@ -36,6 +36,10 @@ internal static class VendorTools
 
     private static readonly InventoryType[] Bags = [InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4];
 
+    /// <summary>
+    /// The saddlebag, whose context menu offers neither Sell nor Have Retainer Sell Items (checked in game at a merchant, and at a
+    /// retainer with the saddlebag window open). Only read to tell the player that what they asked for is there.
+    /// </summary>
     private static readonly InventoryType[] Saddlebag =
         [InventoryType.SaddleBag1, InventoryType.SaddleBag2, InventoryType.PremiumSaddleBag1, InventoryType.PremiumSaddleBag2];
 
@@ -43,14 +47,13 @@ internal static class VendorTools
     private sealed record Source(InventoryType[] Containers, string[] Windows);
 
     /// <summary>
-    /// Where items are sold from, in this order, as the game's context menu allows: the bags, the armoury chest (gear bought from a
-    /// vendor often lands there) and the saddlebag. Never what is worn.
+    /// Where items are sold from, in this order, as the game's context menu allows: the bags, then the armoury chest (gear bought from
+    /// a vendor often lands there). Never what is worn, nor the saddlebag (see <see cref="Saddlebag"/>).
     /// </summary>
     private static readonly Source[] Sources =
     [
         new(Bags, InventoryAddons),
         new(Items.Armoury, ["ArmouryBoard"]),
-        new(Saddlebag, ["InventoryBuddy", "InventoryBuddy2"]),
     ];
 
     public static IEnumerable<McpTool> Create(Configuration config)
@@ -115,8 +118,9 @@ internal static class VendorTools
                     var gearsets = await Game.Run(Gearsets.ItemIds).ConfigureAwait(false);
                     foreach (var (item, quantity, keep) in resolved)
                     {
-                        var stacks = await Game.Run(() => StacksOf(item.RowId)).ConfigureAwait(false);
-                        var refused = VendorSale.Refusal(item.PriceLow > 0, stacks.Sum(s => s.Quantity), gearsets.Contains(item.RowId));
+                        var (stacks, inSaddlebag) = await Game.Run(() => (StacksOf(item.RowId), StacksIn(Saddlebag, item.RowId).Sum(s => s.Quantity)))
+                                                              .ConfigureAwait(false);
+                        var refused = VendorSale.Refusal(item.PriceLow > 0, stacks.Sum(s => s.Quantity), inSaddlebag, gearsets.Contains(item.RowId));
                         try { plans.Add((item, stacks, refused is null ? VendorSale.Pick(stacks.Select(s => s.Quantity).ToList(), quantity, keep) : [], refused)); }
                         catch (ArgumentOutOfRangeException e) { throw new ToolException($"{item.Name.ExtractText()}: {e.Message}"); }
                     }
@@ -330,11 +334,13 @@ internal static class VendorTools
 
     private static unsafe long Gil() => InventoryManager.Instance()->GetGil();
 
-    private static unsafe List<Stack> StacksOf(uint itemId)
+    private static List<Stack> StacksOf(uint itemId) => StacksIn(Sources.SelectMany(s => s.Containers), itemId);
+
+    private static unsafe List<Stack> StacksIn(IEnumerable<InventoryType> containers, uint itemId)
     {
         var im = InventoryManager.Instance();
         var stacks = new List<Stack>();
-        foreach (var container in Sources.SelectMany(s => s.Containers))
+        foreach (var container in containers)
         {
             var c = im->GetInventoryContainer(container);
             if (c == null) continue;

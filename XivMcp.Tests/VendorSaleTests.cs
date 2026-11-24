@@ -98,21 +98,29 @@ public class VendorSaleTests
     [Fact]
     public void Items_vendors_do_not_buy_are_refused_first()
     {
-        Assert.Equal("Vendors do not buy this item.", VendorSale.Refusal(vendorsBuy: false, held: 0, inGearset: true));
+        Assert.Equal("Vendors do not buy this item.", VendorSale.Refusal(vendorsBuy: false, held: 0, inSaddlebag: 3, inGearset: true));
     }
 
     [Fact]
     public void Having_none_says_where_it_looked()
     {
-        // An item that is only in the saddlebag, or only worn, is somewhere the tool doesn't sell from: say where it looked.
-        Assert.Equal("None in the bags or the armoury chest.", VendorSale.Refusal(vendorsBuy: true, held: 0, inGearset: false));
-        Assert.Equal("None in the bags or the armoury chest.", VendorSale.Refusal(vendorsBuy: true, held: 0, inGearset: true));
+        // An item that is only worn, or nowhere, is somewhere the tool doesn't sell from: say where it looked.
+        Assert.Equal("None in the bags or the armoury chest.", VendorSale.Refusal(vendorsBuy: true, held: 0, inSaddlebag: 0, inGearset: false));
+        Assert.Equal("None in the bags or the armoury chest.", VendorSale.Refusal(vendorsBuy: true, held: 0, inSaddlebag: 0, inGearset: true));
+    }
+
+    [Fact]
+    public void An_item_only_in_the_saddlebag_says_to_move_it()
+    {
+        // The game's menu offers no Sell in the saddlebag, so the player has to move it to the bags.
+        Assert.Equal("None in the bags or the armoury chest, but 2 in the saddlebag, which the game does not sell from: move them to the bags first.",
+            VendorSale.Refusal(vendorsBuy: true, held: 0, inSaddlebag: 2, inGearset: false));
     }
 
     [Fact]
     public void Gear_set_pieces_are_never_sold()
     {
-        Assert.Equal("A gear set uses it, so it is not sold.", VendorSale.Refusal(vendorsBuy: true, held: 1, inGearset: true));
-        Assert.Null(VendorSale.Refusal(vendorsBuy: true, held: 1, inGearset: false));
+        Assert.Equal("A gear set uses it, so it is not sold.", VendorSale.Refusal(vendorsBuy: true, held: 1, inSaddlebag: 0, inGearset: true));
+        Assert.Null(VendorSale.Refusal(vendorsBuy: true, held: 1, inSaddlebag: 5, inGearset: false));
     }
 }
