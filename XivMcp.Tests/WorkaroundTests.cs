@@ -35,6 +35,13 @@ public class WorkaroundTests
     }
 
     [Fact]
+    public void Satisfier_declares_its_workarounds()
+    {
+        var satisfier = IntegrationCatalog.All.Single(i => i.PluginId == "vsatisfy");
+        Assert.Equal(SatisfierWorkarounds.All, satisfier.Workarounds);
+    }
+
+    [Fact]
     public void Integrations_without_workarounds_declare_none()
     {
         Assert.Empty(IntegrationCatalog.All.Single(i => i.PluginId == "AutoDuty").Workarounds);

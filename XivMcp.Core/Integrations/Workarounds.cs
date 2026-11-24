@@ -91,3 +91,24 @@ public static class QuestionableWorkarounds
     public static IReadOnlyList<Workaround> All { get; } =
         [PickJob, BackToAcceptedJob, CloseBlockingWindow, AcceptTogether, ConfirmHqTurnIn, SkipMeldedStep, SkipOwnedItemsStep];
 }
+
+/// <summary>What XIV MCP does where Satisfier falls short in custom deliveries with player_ranks_up (deliver_custom_delivery and the jobs that run it).</summary>
+public static class SatisfierWorkarounds
+{
+    // Satisfier turns in everything a request still takes in one go (AutoCommon.TurnIn), and its start IPC takes no count, so XIV MCP
+    // lowers the client's MaxDeliveries on Satisfier's NPCInfo through reflection while it runs and puts it back after
+    // (SatisfierBridge.LimitTurnIns). A count on Satisfier's start IPC would make this one unnecessary.
+    public static readonly Workaround StopBeforeRankUp = new("stop_before_rank_up",
+        "When you watch a rank-up yourself, lowers Satisfier's count of the client's deliveries while it runs, so it turns in only the deliveries before the rank-up.",
+        "Satisfier turns in every delivery the request still takes in one go, the one that ranks the client up too.",
+        "0.0.0.50");
+
+    // Satisfier presses on every Talk window it sees while it turns in (AutoCommon.TurnIn, TurnInState.Talk), the client's story
+    // after a rank-up included, so XIV MCP hands in that delivery itself (RankUpHandIn).
+    public static readonly Workaround HandInRankUp = new("hand_in_rank_up",
+        "When you watch a rank-up yourself, hands in the delivery that ranks the client up without Satisfier, and clicks nothing after Hand Over.",
+        "Satisfier clicks through every line of dialogue while it turns in, the start of the client's story too.",
+        "0.0.0.50");
+
+    public static IReadOnlyList<Workaround> All { get; } = [StopBeforeRankUp, HandInRankUp];
+}

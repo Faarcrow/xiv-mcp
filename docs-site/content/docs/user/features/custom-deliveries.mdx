@@ -79,6 +79,7 @@ Satisfier hands in every delivery itself, also the one that ranks a client up, a
 - If XIV MCP cannot get to Hand Over (the game asks a question first, or a window does not open), it tells you in chat and with a notification to hand it in yourself. After 30 minutes without a hand-in it stops waiting; in a conversation you started after being asked, it waits up to 2 hours. Running the delivery again makes the item again if it is gone, takes you back to the client first, then tries again. Running it again after the client ranked up does nothing.
 - When the story still holds your character 10 minutes after the hand-in, or the game holds it with no window left for a minute, XIV MCP stops waiting and says so. The delivery is done then.
 - A rank-up only counts when it fits in this week's deliveries left. When there are fewer left than the client needs, nothing is left to you.
+- Lowering Satisfier's count (below) and the hand-in without Satisfier are workarounds for what Satisfier does on its own. The delivery's result names the Satisfier version it ran with and the workarounds it used (`workarounds`), and both are on [Plugins XIV MCP uses](/docs/user/plugins#custom-deliveries), with the Satisfier version they were last checked against.
 
 The weekly job does this for every client that ranks up. After each rank-up it plans the rest of the week again, as the client has new requests then. While the job waits for you, your assistant's other actions in the game are refused, as during any job step. If TextAdvance is on, it still moves the story on by itself.
 
