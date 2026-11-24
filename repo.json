@@ -3,7 +3,7 @@
     "Author": "IndividualGather",
     "Name": "XIV MCP",
     "InternalName": "XivMcp",
-    "AssemblyVersion": "0.3.0.147",
+    "AssemblyVersion": "0.3.0.148",
     "Description": "XIV MCP runs a local MCP server (only reachable from your own PC, protected by an access token) so any AI assistant that supports the Model Context Protocol (Claude, ChatGPT, Codex, LM Studio and others) can see your game and help with it.\n\nRead your character live: stats and jobs, gear, inventory, currencies, quests, achievements and unlocks, party, targets, nearby objects, FATEs and the game's data sheets. Retainers and submersibles are remembered between visits.\n\nOptional modules, each behind its own switch in /xivmcp: game interaction and navigation, inventory and retainers, market and purchases (every non-gil purchase asks you in game), crafting and gathering, quests, custom deliveries, fishing, submersibles, plugin management, and background jobs that run for hours on their own.\n\nDocumentation: https://individualgather.github.io/xiv-mcp/",
     "ApplicableVersion": "any",
     "RepoUrl": "https://github.com/IndividualGather/xiv-mcp",
@@ -28,12 +28,12 @@
     "IconUrl": "https://raw.githubusercontent.com/IndividualGather/xiv-mcp/master/XivMcp/images/icon.png",
     "Punchline": "Uplink AI assistants to Final Fantasy XIV through the Model Context Protocol.",
     "AcceptsFeedback": true,
-    "DownloadLinkInstall": "https://github.com/IndividualGather/xiv-mcp/releases/download/v0.3.0.147/latest.zip",
-    "DownloadLinkUpdate": "https://github.com/IndividualGather/xiv-mcp/releases/download/v0.3.0.147/latest.zip",
-    "DownloadLinkTesting": "https://github.com/IndividualGather/xiv-mcp/releases/download/v0.3.0.147/latest.zip",
-    "LastUpdate": 1795372532,
+    "DownloadLinkInstall": "https://github.com/IndividualGather/xiv-mcp/releases/download/v0.3.0.148/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/IndividualGather/xiv-mcp/releases/download/v0.3.0.148/latest.zip",
+    "DownloadLinkTesting": "https://github.com/IndividualGather/xiv-mcp/releases/download/v0.3.0.148/latest.zip",
+    "LastUpdate": 1795558812,
     "IsHide": false,
     "IsTestingExclusive": false,
-    "Changelog": "**Full Changelog**: https://github.com/IndividualGather/xiv-mcp/compare/v0.3.0.146...v0.3.0.147"
+    "Changelog": "## What's Changed\n* CI: tests for pull requests, releases only from master by @IndividualGather in https://github.com/IndividualGather/xiv-mcp/pull/13\n* Workarounds: integrations say where they step in for their plugin, and which plugin version each was checked against by @Faarcrow in https://github.com/IndividualGather/xiv-mcp/pull/12\n* Jobs: record the client that started them, not the one that connected last by @Faarcrow in https://github.com/IndividualGather/xiv-mcp/pull/22\n* buy_item: tick the Proceed box of the shops' can't-equip warnings by @Faarcrow in https://github.com/IndividualGather/xiv-mcp/pull/24\n* sell_to_vendor: sell from the armoury chest too, never gear set pieces by @Faarcrow in https://github.com/IndividualGather/xiv-mcp/pull/26\n* Crafting: craft_item waits for Artisan, retried steps continue (#19, with review fixes) by @IndividualGather in https://github.com/IndividualGather/xiv-mcp/pull/27\n* Crafting: craft_item waits until Artisan is done, and retried crafting steps continue where they stopped by @Faarcrow in https://github.com/IndividualGather/xiv-mcp/pull/19\n* Travel: aetheryte positions from the zone layout, attuned aetherytes, zones with their own aethernet (#20, with review fixes) by @IndividualGather in https://github.com/IndividualGather/xiv-mcp/pull/28\n* Travel: aetheryte positions from the zone layout, only attuned aetherytes, and zones with their own aethernet by @Faarcrow in https://github.com/IndividualGather/xiv-mcp/pull/20\n* Custom deliveries: the way to the next rank, request levels, rank-up by the player (#21, with review fixes) by @IndividualGather in https://github.com/IndividualGather/xiv-mcp/pull/31\n* Custom deliveries: the way to the next rank, each request's level against Satisfier's job, and leaving the rank-up to the player by @Faarcrow in https://github.com/IndividualGather/xiv-mcp/pull/21\n\n\n**Full Changelog**: https://github.com/IndividualGather/xiv-mcp/compare/v0.3.0.147...v0.3.0.148"
   }
 ]
