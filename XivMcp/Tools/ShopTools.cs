@@ -39,9 +39,10 @@ internal static class ShopTools
     private static readonly string[] ConfirmAddons = ["ShopExchangeItemDialog", "ShopExchangeCurrencyDialog"];
 
     /// <summary>
-    /// The shop prompts whose "Proceed" box XIV MCP ticks (Addon rows): "You cannot currently equip this item." and "You will never be
-    /// able to equip this item.", each asked by gil shops (1962, 1939), exchanges (2436, 2437) and others (11502, 11503). They only
-    /// warn about the item that was asked for and approved; any other prompt with that box is answered No.
+    /// The prompts whose "Proceed" box XIV MCP ticks (Addon rows): the game's two warnings that the item can't be equipped, "You cannot
+    /// currently equip this item." and "You will never be able to equip this item.", which different windows ask from their own rows
+    /// (a gil shop asked 2436 or 11502 in game). They only warn about the item buy_item was asked to buy; any other prompt with that box
+    /// (bait above the fisher's level, a weapon already owned) is answered No.
     /// </summary>
     private static readonly uint[] EquipWarnings = [1939, 1962, 2436, 2437, 11502, 11503];
 
@@ -88,8 +89,8 @@ internal static class ShopTools
             Description = "Buys an item from an NPC vendor (needs a vendor-location plugin to know where vendors stand): picks a vendor (gil vendors " +
                           "in a city first, then the current zone, or the one you name), travels there if needed (with the navigation plugins installed, needs 'Game & navigation'), " +
                           "opens the shop through the NPC's menus (also a topic menu in front of the shops) and buys the quantity in batches of up to 99 " +
-                          "(gear, which doesn't stack, one piece at a time), confirming like a player (also the warning that the character can't equip " +
-                          "the item, ticking its Proceed box). Checks free " +
+                          "(gear, which doesn't stack, one piece at a time), confirming like a player; on the warning that the item can't be equipped " +
+                          "it ticks the Proceed box. Checks free " +
                           "bag slots (and gil for gil shops) first and verifies what arrived. Gil shops buy directly. Any other shop (tomestones, " +
                           "scrips, seals, items) shows an approval popup in game while its window is open, and only buys when the player clicks " +
                           "Approve. Supported shop windows: gil shops, the common exchange windows and the scrip exchanges with several pages, where " +
@@ -643,7 +644,7 @@ internal static class ShopTools
                 if (warning is not null && !warned)
                 {
                     warned = true;
-                    steps.Add($"The game warned \"{warning.ReplaceLineEndings(" ")}\"; ticked Proceed and bought it as asked.");
+                    steps.Add($"The game warned: \"{warning.ReplaceLineEndings(" ")}\" Ticked Proceed and confirmed.");
                 }
                 if (now > have)
                 {
@@ -743,17 +744,23 @@ internal static class ShopTools
         if (yesno->YesButton->IsEnabled) { Fire(&yesno->AtkUnitBase, true, 0); return null; }
         var box = yesno->ConfirmCheckBox;
         if (box == null || box->AtkComponentButton.AtkComponentBase.OwnerNode == null ||
-            !box->AtkComponentButton.AtkComponentBase.OwnerNode->AtkResNode.IsVisible() || box->AtkComponentButton.IsChecked) return null;
-        var prompt = GameWindows.YesNoPrompt() ?? "";
+            !box->AtkComponentButton.AtkComponentBase.OwnerNode->AtkResNode.IsVisible() || box->IsChecked) return null;
+        if (GameWindows.YesNoPrompt() is not { } prompt) return null;
         if (!EquipWarnings.Any(row => PromptTemplate.Matches(prompt, GameWindows.TemplatePieces(row))))
         {
             GameWindows.AnswerYesNo(false);
-            throw new ToolException($"The shop asked \"{prompt.ReplaceLineEndings(" ")}\" and buy_item only confirms warnings about equipping the item, " +
-                                    "so it answered No. Buy it by hand if you want it anyway.");
+            throw new ToolException($"The shop asked \"{prompt.ReplaceLineEndings(" ")}\". buy_item only ticks the Proceed box of the warnings " +
+                                    "that the item cannot be equipped, so it answered No. Buy it by hand if you want it anyway.");
         }
         // A mouse click ticks the box itself and then tells the window, which enables OK; the window's event alone leaves it unticked.
-        box->AtkComponentButton.SetChecked(true);
-        VentureTools.Click(&yesno->AtkUnitBase, &box->AtkComponentButton);
+        box->SetChecked(true);
+        if (!VentureTools.Click(&yesno->AtkUnitBase, &box->AtkComponentButton))
+        {
+            box->SetChecked(false);
+            GameWindows.AnswerYesNo(false);
+            throw new ToolException($"The shop asked \"{prompt.ReplaceLineEndings(" ")}\", and its Proceed box could not be ticked, so it answered No. " +
+                                    "Buy it by hand.");
+        }
         return prompt;
     }
 
