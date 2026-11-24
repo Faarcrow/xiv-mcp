@@ -37,7 +37,10 @@ internal static class VendorTools
 
     private static readonly InventoryType[] Bags = [InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4];
 
-    /// <summary>Where items are sold from, as the game's context menu allows: the bags first, then the armoury chest (gear bought from a vendor often lands there).</summary>
+    /// <summary>
+    /// Where items are sold from, as the game's context menu allows: the bags first, then the armoury chest (gear bought from a vendor
+    /// often lands there).
+    /// </summary>
     private static readonly InventoryType[] SellFrom = [.. Bags, .. Items.Armoury];
 
     public static IEnumerable<McpTool> Create(Configuration config)
@@ -45,11 +48,12 @@ internal static class VendorTools
         yield return new McpTool
         {
             Name = "sell_to_vendor",
-            Description = "Sells items from the bags and the armoury chest for gil, as their context menu does: 'Sell' while a merchant's shop is " +
-                          "open (talk to a merchant, open its shop), or 'Have Retainer Sell Items' while a retainer's inventory is open " +
-                          "at a summoning bell (open_retainer), which saves walking to a merchant. Whole stacks, smallest first: all of " +
-                          "an item, at most 'quantity', or all but 'keep'. Vendors pay little (often 1 to 10 gil each), so check the " +
-                          "market board first (get_market_prices). Items a vendor does not buy, and items a gear set uses, are reported and left alone. Untradable items " +
+            Description = "Sells items from the bags and the armoury chest for gil, as their context menu does: 'Sell' while a " +
+                          "merchant's shop is open (talk to a merchant, open its shop), or 'Have Retainer Sell Items' while a retainer's " +
+                          "inventory is open at a summoning bell (open_retainer), which saves walking to a merchant. Whole stacks, smallest " +
+                          "first: all of an item, at most 'quantity', or all but 'keep'. Vendors pay little (often 1 to 10 gil each), so " +
+                          "check the market board first (get_market_prices). Items a vendor does not buy, and items a gear set uses (every " +
+                          "copy), are reported and left alone. Untradable items " +
                           "are only sold after the player approves them in game (one question for all of them in the call); declined ones " +
                           "are left alone. A stack the player moved or changed meanwhile is left alone and reported under 'skipped'. Sold items can be bought back: from a merchant's buyback tab until the shop is closed, or from " +
                           "the retainer's \"Item buyback\" until it is dismissed. Before XIV MCP itself closes that shop or dismisses that " +
@@ -215,10 +219,12 @@ internal static class VendorTools
         if (changed is not null) return changed;
         if (!await GameWindows.WaitFor(() => GameWindows.Ready("ContextMenu"), TimeSpan.FromSeconds(3), ct).ConfigureAwait(false))
             throw new ToolException($"The context menu of {name} did not open.");
+        var noSell = $"{name}'s context menu has no Sell entry: the shop or retainer window may have closed, or merchants do not buy it.";
         if (!await Game.Run(PickSell).ConfigureAwait(false))
         {
             // The inventory window on its "Key Items & Crystals" tab makes the menu leave out Sell: close it and open the menu
-            // without an owner window, as the game does when the inventory isn't shown.
+            // without an owner window, as the game does when the inventory isn't shown. That tab has nothing to do with the armoury chest.
+            if (!Bags.Contains(stack.Container)) throw new ToolException(noSell);
             await Game.Run(CloseInventoryWindows).ConfigureAwait(false);
             await Task.Delay(300, ct).ConfigureAwait(false);
             changed = await Game.Run(() =>
@@ -230,8 +236,7 @@ internal static class VendorTools
             if (changed is not null) return changed;
             if (!await GameWindows.WaitFor(() => GameWindows.Ready("ContextMenu"), TimeSpan.FromSeconds(3), ct).ConfigureAwait(false))
                 throw new ToolException($"The context menu of {name} did not open.");
-            if (!await Game.Run(PickSell).ConfigureAwait(false))
-                throw new ToolException($"{name}'s context menu has no Sell entry: the shop or retainer window may have closed, or merchants do not buy it.");
+            if (!await Game.Run(PickSell).ConfigureAwait(false)) throw new ToolException(noSell);
         }
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (DateTime.UtcNow < deadline)

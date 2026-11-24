@@ -4,7 +4,7 @@ using System.Linq;
 
 namespace XivMcp.Shops;
 
-/// <summary>What a bag slot holds: the item (0 when empty), whether it is high quality, and how many.</summary>
+/// <summary>What a slot of the bags or the armoury chest holds: the item (0 when empty), whether it is high quality, and how many.</summary>
 public readonly record struct SlotContent(uint ItemId, bool Hq, int Quantity);
 
 /// <summary>Which stacks to sell to a vendor. The game sells whole stacks from the context menu of the bags and the armoury chest.</summary>
@@ -12,7 +12,7 @@ public static class VendorSale
 {
     /// <summary>
     /// Null when the slot still holds the stack planned for sale (same item, quality and quantity); otherwise why it doesn't. The
-    /// bags are read before the player is asked about untradable items, which can take minutes, so they may have sorted, moved or
+    /// slots are read before the player is asked about untradable items, which can take minutes, so they may have sorted, moved or
     /// used the stack meanwhile, and selling the slot then would sell something else.
     /// </summary>
     public static string? Changed(SlotContent planned, SlotContent? now)
@@ -33,7 +33,7 @@ public static class VendorSale
 
     /// <summary>
     /// Why none of an item is sold, before its stacks are picked, or null: vendors don't buy it, none is in the bags or the armoury
-    /// chest (<paramref name="held"/> counts both), or a gear set uses it, so selling by name could take a piece the player wears.
+    /// chest (<paramref name="held"/> counts both), or a gear set uses it, so selling by name could take a piece a set equips.
     /// </summary>
     public static string? Refusal(bool vendorsBuy, int held, bool inGearset) => (vendorsBuy, held, inGearset) switch
     {

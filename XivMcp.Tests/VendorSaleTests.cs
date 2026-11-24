@@ -104,8 +104,9 @@ public class VendorSaleTests
     [Fact]
     public void Having_none_says_where_it_looked()
     {
-        // Before, an item only in the saddlebag (or nowhere) came back as "sold 0, left 0" with no word on why.
+        // An item that is only in the saddlebag, or only worn, is somewhere the tool doesn't sell from: say where it looked.
         Assert.Equal("None in the bags or the armoury chest.", VendorSale.Refusal(vendorsBuy: true, held: 0, inGearset: false));
+        Assert.Equal("None in the bags or the armoury chest.", VendorSale.Refusal(vendorsBuy: true, held: 0, inGearset: true));
     }
 
     [Fact]
