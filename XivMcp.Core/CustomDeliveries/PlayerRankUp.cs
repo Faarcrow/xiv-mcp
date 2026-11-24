@@ -6,8 +6,9 @@ using System.Text.Json.Nodes;
 namespace XivMcp.CustomDeliveries;
 
 /// <summary>
-/// The delivery that ranks a client up, left to the player so they can watch the client's story (player_ranks_up): XIV MCP makes the
-/// item and takes the character to the client, then waits without touching the conversation.
+/// The delivery that ranks a client up, with the client's story left to the player so they can watch it (player_ranks_up): XIV MCP
+/// makes the item, takes the character to the client and hands it in, then waits without touching the story. When its hand-in cannot
+/// get to Hand Over, the player is asked to hand it in.
 /// </summary>
 public static class PlayerRankUp
 {
@@ -38,7 +39,7 @@ public static class PlayerRankUp
         (inConversation ? " You are still in a conversation, which XIV MCP leaves alone." : "");
 
     public static string WentInShort(string item, string client) =>
-        $"You handed in {item}, but {client} did not reach the next rank: a delivery below the top collectability tier gives less " +
+        $"{item} went in, but {client} did not reach the next rank: a delivery below the top collectability tier gives less " +
         "satisfaction. The delivery counts.";
 
     public static string StillInStory(string client) =>

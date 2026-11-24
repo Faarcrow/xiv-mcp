@@ -57,16 +57,17 @@ internal static class CustomDeliveryTools
                           "the reward scrips' cap (get_custom_deliveries shows fitUnderScripCap), and refuses when none fit: spend the scrips " +
                           "first. Satisfier crafts and gathers with the job its 'Job choice' setting picks, without looking at the request's " +
                           "level: a crafting or gathering request that job cannot make (levelOk false in get_custom_deliveries) is refused " +
-                          "before anything is bought, and without 'kind' the next kind is chosen. With 'player_ranks_up' the delivery that " +
-                          "ranks the client up is left to the player, and the tool waits for them: run it as a job step (start_job, or " +
-                          "do_custom_deliveries with the same argument). Requires 'Custom Deliveries' in /xivmcp.",
+                          "before anything is bought, and without 'kind' the next kind is chosen. With 'player_ranks_up' the client's rank-up " +
+                          "story is left to the player: the delivery that ranks the client up is handed in without Satisfier, and the tool " +
+                          "waits until the player is out of the story: run it as a job step (start_job, or do_custom_deliveries with the " +
+                          "same argument). Requires 'Custom Deliveries' in /xivmcp.",
             InputSchema = """
                 {
                   "type": "object",
                   "properties": {
                     "client": { "type": "string", "description": "The client's name (as get_custom_deliveries names them)." },
                     "kind": { "type": "string", "enum": ["craft", "gather", "fish"], "description": "Default: the bonus request, else craft, else gather. Use 'fish' only when the player asked for fishing." },
-                    "player_ranks_up": { "type": "boolean", "description": "Leave the delivery that ranks the client up to the player, so they can watch the client's rank-up story (default false: Satisfier hands it in and the story is clicked through). The deliveries before it go in as usual, always with Satisfier (Questionable would hand in the rank-up item too). For the rank-up one the item is made and the character taken to the client; then the player is told in game, and the tool waits until the client's rank changes and the player is out of the story, without clicking anything. Stopping or failing the step while the player is in a conversation they started, or in the story, leaves it alone too. When the hand-in goes in without reaching the next rank (an item below the top collectability tier gives less satisfaction), the step ends saying so. After 30 minutes without a hand-in it fails (in a conversation the player started after being asked, after 2 hours): when the player handed it in after all, skip the step; calling it again makes the item again if it is gone, has Satisfier take the character back to the client, then asks again. A run after the client ranked up (a resume or retry of the same job step) delivers nothing and ends. When the story holds the character for over 10 minutes after the hand-in, it fails saying so: the delivery is done, skip the step. Changes nothing when no delivery of this week reaches the next rank." }
+                    "player_ranks_up": { "type": "boolean", "description": "Leave the client's rank-up story to the player, so they can watch it (default false: Satisfier hands the delivery in and the story is clicked through). The deliveries before it go in as usual, always with Satisfier (Questionable would hand in the rank-up item too). For the rank-up one the item is made and the character taken to the client, then XIV MCP hands it in itself the way a player does (talks to the client, picks the request, puts the item in, presses Hand Over) and clicks nothing after Hand Over: the tool waits until the player is out of the story. Stopping or failing the step while the player is in the story, or in a conversation they started, leaves it alone too. When the delivery goes in without the client reaching the next rank (an item below the top collectability tier gives less satisfaction), the step ends saying so. When XIV MCP cannot get to Hand Over (a question from the game, a window that does not open), the player is told in game to hand it in and the tool waits for them; after 30 minutes without a hand-in it fails (in a conversation the player started after being asked, after 2 hours): when the player handed it in after all, skip the step; calling it again makes the item again if it is gone, has Satisfier take the character back to the client, then tries again. A run after the client ranked up (a resume or retry of the same job step) delivers nothing and ends. When the story holds the character for over 10 minutes after the hand-in, it fails saying so: the delivery is done, skip the step. Changes nothing when no delivery of this week reaches the next rank." }
                   },
                   "required": ["client"]
                 }
@@ -88,7 +89,7 @@ internal static class CustomDeliveryTools
                           "delivers them one client after another with deliver_custom_delivery. Fishing requests are caught first with " +
                           "AutoHook (switch to Fisher, bait, the spot, fish_until), only with kind 'fish'. Optional 'kind' for everyone and 'clients' to limit it. " +
                           "The plan shows per run 'rankUpDelivery': which of its deliveries ranks the client up, if one does. With " +
-                          "'player_ranks_up' each rank-up delivery is left to the player (see deliver_custom_delivery), and the job's " +
+                          "'player_ranks_up' each client's rank-up story is left to the player (see deliver_custom_delivery), and the job's " +
                           "deliveries stop at the first one, followed by a do_custom_deliveries step that plans the rest again, as the client " +
                           "has new requests then. With player_ranks_up as a job step it puts its steps into that job right after itself " +
                           "(the job's later steps stay) instead of starting another job. " +
@@ -99,7 +100,7 @@ internal static class CustomDeliveryTools
                   "properties": {
                     "kind": { "type": "string", "enum": ["craft", "gather", "fish"], "description": "Deliver this kind for every client. Use 'fish' only when the player asked for fishing." },
                     "clients": { "type": "array", "items": { "type": "string" }, "description": "Only these clients." },
-                    "player_ranks_up": { "type": "boolean", "description": "Leave each delivery that ranks a client up to the player, to watch the client's rank-up story (default false: Satisfier hands it in and the story is clicked through). The job then waits for the player at each rank-up (30 minutes, then that step fails and the job waits for retry or skip), and plans again after it. While it waits, other tool calls that act in the game are refused, as during any job step." }
+                    "player_ranks_up": { "type": "boolean", "description": "Leave each client's rank-up story to the player, to watch it (default false: Satisfier hands the delivery in and the story is clicked through). XIV MCP still hands in the delivery that ranks a client up, then clicks nothing in the story and waits until the player is out of it (if it cannot hand it in, it asks the player to: 30 minutes, then that step fails and the job waits for retry or skip), and plans again after it. While it waits, other tool calls that act in the game are refused, as during any job step." }
                   }
                 }
                 """,
@@ -381,7 +382,8 @@ internal static class CustomDeliveryTools
         }
         var (inBags, usable, atClient) = await Game.Run(() =>
             (Items.CountInBags(c.Items[(int)chosen]), c.InBags(levels, chosen), SatisfierBridge.AtClient(c))).ConfigureAwait(false);
-        // With player_ranks_up the delivery that ranks the client up is left to the player; the ones before it go in as usual.
+        // With player_ranks_up the delivery that ranks the client up is handed in apart, its story left to the player; the ones before
+        // it go in as usual.
         var plan = RankUpTurnIn.Plan(playerRanksUp, chosen == DeliveryKind.Gather, c.Satisfaction, c.SatisfactionMax, levels.SatisfactionPerDelivery[(int)chosen],
                                      planned, allowances, inBags, usable, atClient);
         var toTurnIn = plan.ToTurnIn;
@@ -561,9 +563,9 @@ internal static class CustomDeliveryTools
     private const string DeliverTool = "deliver_custom_delivery";
 
     /// <summary>
-    /// The rank-up delivery, left to the player: once the deliveries before it are in and its item is in the bags, asks the player in
-    /// game to hand it in and waits until the delivery is counted, then until the player is out of the client's story, and judges then
-    /// whether the client ranked up (the rank changes during the story). Never clicks or recovers anything in a conversation the player started meanwhile, also when the step is
+    /// The rank-up delivery, its story left to the player: once the deliveries before it are in and its item is in the bags, hands it in
+    /// (<see cref="HandInRankUp"/>; if that fails, asks the player in game to) and waits until it is counted, then until the player is
+    /// out of the client's story, and judges then whether the client ranked up. Never clicks or recovers anything in a conversation the player started meanwhile, also when the step is
     /// stopped or fails (<see cref="JobManager.PlayerInConversation"/>); see <see cref="HandInWait"/> and <see cref="StoryWait"/> for
     /// when it gives up. Returns true once the client ranked up.
     /// </summary>
@@ -578,12 +580,27 @@ internal static class CustomDeliveryTools
                                     $"{have} {item} in the bags). Its last step: {statuses.LastOrDefault() ?? "none"}.");
         var askedPlayer = now.Rank == c.Rank;
         var outcome = askedPlayer ? HandIn.Wait : HandIn.RankedUp;
+        var handedIn = false;
         if (askedPlayer)
         {
             ct.ThrowIfCancellationRequested();
-            PlayerGuide.Ask(PlayerRankUp.Ask(item, c.Name));
-            statuses.Add($"The rank-up delivery is left to you ({before} delivered before it): asked you in game to hand in {item}.");
-            JobManager.Instance?.StepProgress(DeliverTool, $"Waiting for you to hand in {item} to {c.Name}.");
+            JobManager.Instance?.StepProgress(DeliverTool, $"Handing in {item} to {c.Name}; the story after it is left to you.");
+            var problem = await HandInRankUp(c, kind, ct).ConfigureAwait(false);
+            handedIn = problem is null;
+            if (handedIn)
+            {
+                // From Hand Over on, the client's story is the player's, also when the step is stopped meanwhile.
+                JobManager.Instance?.PlayerInConversation(DeliverTool, true);
+                statuses.Add($"Handed in {item} to {c.Name} ({before} delivered before it); nothing after Hand Over is clicked.");
+                JobManager.Instance?.StepProgress(DeliverTool, $"Handed in {item}: {c.Name}'s story is yours.");
+            }
+            else
+            {
+                PlayerGuide.Ask(PlayerRankUp.Ask(item, c.Name));
+                statuses.Add($"Could not hand in {item} ({problem}), so the rank-up delivery is left to you ({before} delivered before it): " +
+                             $"asked you in game to hand it in.");
+                JobManager.Instance?.StepProgress(DeliverTool, $"Waiting for you to hand in {item} to {c.Name}.");
+            }
             var wait = new HandInWait(DateTime.UtcNow, now.DeliveriesLeft);
             try
             {
@@ -592,7 +609,7 @@ internal static class CustomDeliveryTools
                     var (client, inConversation) = await Game.Run(() => (Find(c.Name), InConversation())).ConfigureAwait(false);
                     outcome = wait.Poll(DateTime.UtcNow, inConversation, client.Rank != c.Rank, client.DeliveriesLeft);
                     // Only a conversation the player started is theirs: one held from before (a menu left open) recovery may close.
-                    JobManager.Instance?.PlayerInConversation(DeliverTool, wait.PlayersConversation || outcome is HandIn.RankedUp or HandIn.WentIn);
+                    JobManager.Instance?.PlayerInConversation(DeliverTool, handedIn || wait.PlayersConversation || outcome is HandIn.RankedUp or HandIn.WentIn);
                     if (outcome is HandIn.TimedOut or HandIn.TimedOutInConversation)
                     {
                         var stillHave = await Game.Run(() => c.InBags(levels, kind)).ConfigureAwait(false) > 0;
@@ -618,6 +635,7 @@ internal static class CustomDeliveryTools
                     var rank = (await Game.Run(() => Find(c.Name)).ConfigureAwait(false)).Rank;
                     outcome = PlayerRankUp.AfterStory(outcome, rank != c.Rank);
                     statuses.Add(outcome == HandIn.WentInShort ? PlayerRankUp.WentInShort(item, c.Name)
+                                 : handedIn ? $"{c.Name} reached rank {rank}, and you are out of the story."
                                  : askedPlayer ? $"You handed in {item}: {c.Name} reached rank {rank}."
                                  : $"{c.Name} reached rank {rank}, and you are out of the story.");
                     return outcome == HandIn.RankedUp;
@@ -628,6 +646,28 @@ internal static class CustomDeliveryTools
             }
             await Task.Delay(2000, ct).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Hands in the rank-up delivery for the player (<see cref="RankUpHandIn"/>), who then only watches the story. Null once Hand Over
+    /// was pressed, else what kept it from getting there (the player is asked to hand it in instead).
+    /// </summary>
+    private static async Task<string?> HandInRankUp(SatisfierBridge.Client c, DeliveryKind kind, CancellationToken ct)
+    {
+        var handIn = new RankUpHandIn(c, (int)kind, c.Items[(int)kind]);
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            switch (await Game.Run(handIn.Step).ConfigureAwait(false))
+            {
+                case RankUpHandIn.Next.HandedOver: return null;
+                case RankUpHandIn.Next.Failed: return handIn.Problem;
+            }
+            // Each window is acted on as soon as it is ready; RankUpHandIn waits for the game's answer before acting on it again.
+            await Task.Delay(150, ct).ConfigureAwait(false);
+        }
+        return "it did not get to Hand Over within 30 seconds";
     }
 
     /// <summary>

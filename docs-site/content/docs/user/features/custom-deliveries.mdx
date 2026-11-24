@@ -69,13 +69,14 @@ While a delivery runs, **YesAlready** is paused (TextAdvance is not). Its "Custo
 
 ## Watching a rank-up
 
-Satisfier hands in every delivery itself, also the one that ranks a client up, and the client's story after it is clicked through. To watch that story, ask your assistant to leave the rank-up to you (`player_ranks_up`, off unless you ask for it):
+Satisfier hands in every delivery itself, also the one that ranks a client up, and the client's story after it is clicked through. To watch that story, ask your assistant to leave the rank-up story to you (`player_ranks_up`, off unless you ask for it):
 
 - The deliveries before the rank-up go in as usual, always with Satisfier. For a gathering request whose items are already in your bags, XIV MCP otherwise has Questionable turn them in, but Questionable would hand in the rank-up item too. Satisfier's own turn-in does not work for every client (Tiisol Ja), so such a delivery can fail with this option on.
-- For the rank-up delivery, the item is still made and your character is taken to the client. Satisfier closes the client's menu after the deliveries before it. Then XIV MCP tells you in chat and with a notification to hand it in yourself.
-- XIV MCP waits until the client's rank goes up and you are out of the story. It clicks nothing and closes nothing in a conversation you start, also when the job is paused or cancelled then, or the delivery fails.
-- If your hand-in goes in but the client does not reach the next rank (an item below the client's top collectability tier gives less satisfaction), the delivery ends and says so.
-- After 30 minutes without a hand-in it stops waiting. In a conversation you started after being asked, it waits up to 2 hours. Running the delivery again makes the item again if it is gone, takes you back to the client first, then asks again. Running it again after the client ranked up does nothing.
+- For the rank-up delivery, the item is still made and your character is taken to the client. Satisfier closes the client's menu after the deliveries before it.
+- XIV MCP then hands it in without Satisfier, as you would: it talks to the client, picks the request, puts the item in and presses Hand Over. Satisfier is not used for this one because it clicks through every line of dialogue while it turns in.
+- From Hand Over on, the story is yours: XIV MCP waits until you are out of it, and clicks or closes nothing in it, also when the job is paused or cancelled then, or the delivery fails.
+- If the delivery goes in but the client does not reach the next rank (an item below the client's top collectability tier gives less satisfaction), the delivery ends and says so.
+- If XIV MCP cannot get to Hand Over (the game asks a question first, or a window does not open), it tells you in chat and with a notification to hand it in yourself. After 30 minutes without a hand-in it stops waiting; in a conversation you started after being asked, it waits up to 2 hours. Running the delivery again makes the item again if it is gone, takes you back to the client first, then tries again. Running it again after the client ranked up does nothing.
 - When the story still holds your character 10 minutes after the hand-in, or the game holds it with no window left for a minute, XIV MCP stops waiting and says so. The delivery is done then.
 - A rank-up only counts when it fits in this week's deliveries left. When there are fewer left than the client needs, nothing is left to you.
 
