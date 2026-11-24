@@ -66,8 +66,9 @@ internal static class VendorTools
                           "inventory is open at a summoning bell (open_retainer), which saves walking to a merchant. Whole stacks, smallest " +
                           "first: all of an item, at most 'quantity', or all but 'keep'. Vendors pay little (often 1 to 10 gil each), so " +
                           "check the market board first (get_market_prices). Items a vendor does not buy, and items a gear set uses (every " +
-                          "copy), are reported and left alone. The game does not sell from the saddlebag: an item that is only there is " +
-                          "reported, to be moved to the bags first (move_items). Untradable items " +
+                          "copy), are reported and left alone. The game does not sell from the saddlebag: copies there are reported with how " +
+                          "to move them to the bags, which at a shop means closing it first (the game does not open the saddlebag then). " +
+                          "Untradable items " +
                           "are only sold after the player approves them in game (one question for all of them in the call); declined ones " +
                           "are left alone. A stack the player moved or changed meanwhile is left alone and reported under 'skipped'. Sold items can be bought back: from a merchant's buyback tab until the shop is closed, or from " +
                           "the retainer's \"Item buyback\" until it is dismissed. Before XIV MCP itself closes that shop or dismisses that " +
@@ -115,14 +116,16 @@ internal static class VendorTools
                         if (!CanSell()) throw new ToolException("No shop or retainer inventory is open. Talk to a merchant and open its shop first (navigate_to destination npc or object), or open a retainer at a summoning bell (open_retainer), then sell.");
                         return wanted.Select(w => (Item: Items.Resolve(w.Query), w.Quantity, w.Keep)).ToList();
                     }).ConfigureAwait(false);
-                    var plans = new List<(Lumina.Excel.Sheets.Item Item, List<Stack> Stacks, IReadOnlyList<int> Pick, string? Refused)>();
+                    var plans = new List<(Lumina.Excel.Sheets.Item Item, List<Stack> Stacks, IReadOnlyList<int> Pick, string? Refused, int InSaddlebag)>();
                     var gearsets = await Game.Run(Gearsets.ItemIds).ConfigureAwait(false);
+                    // What to do with saddlebag copies depends on it: a merchant's shop keeps the saddlebag from opening.
+                    var atShop = await Game.Run(() => Buyback.ShopOpen).ConfigureAwait(false);
                     foreach (var (item, quantity, keep) in resolved)
                     {
                         var (stacks, inSaddlebag) = await Game.Run(() => (StacksOf(item.RowId), StacksIn(Saddlebag, item.RowId).Sum(s => s.Quantity)))
                                                               .ConfigureAwait(false);
-                        var refused = VendorSale.Refusal(item.PriceLow > 0, stacks.Sum(s => s.Quantity), inSaddlebag, gearsets.Contains(item.RowId));
-                        try { plans.Add((item, stacks, refused is null ? VendorSale.Pick(stacks.Select(s => s.Quantity).ToList(), quantity, keep) : [], refused)); }
+                        var refused = VendorSale.Refusal(item.PriceLow > 0, stacks.Sum(s => s.Quantity), inSaddlebag, gearsets.Contains(item.RowId), atShop);
+                        try { plans.Add((item, stacks, refused is null ? VendorSale.Pick(stacks.Select(s => s.Quantity).ToList(), quantity, keep) : [], refused, inSaddlebag)); }
                         catch (ArgumentOutOfRangeException e) { throw new ToolException($"{item.Name.ExtractText()}: {e.Message}"); }
                     }
                     // Only what would really be sold is asked about.
@@ -137,7 +140,7 @@ internal static class VendorTools
 
                     var gilBefore = await Game.Run(Gil).ConfigureAwait(false);
                     var results = new List<object>();
-                    foreach (var (item, stacks, pick, refused) in plans)
+                    foreach (var (item, stacks, pick, refused, inSaddlebag) in plans)
                     {
                         var name = item.Name.ExtractText();
                         if (refused is not null)
@@ -175,7 +178,11 @@ internal static class VendorTools
                             await Task.Delay(Random.Shared.Next(350, 650), ct).ConfigureAwait(false);
                         }
                         var left = stacks.Sum(s => s.Quantity) - sold;
-                        results.Add(new { item = name, sold, left, vendorPrice = item.PriceLow, stopped, skipped = skipped.Count > 0 ? skipped : null });
+                        results.Add(new
+                        {
+                            item = name, sold, left, vendorPrice = item.PriceLow, stopped, skipped = skipped.Count > 0 ? skipped : null,
+                            saddlebag = VendorSale.LeftInSaddlebag(inSaddlebag, atShop),
+                        });
                         if (stopped is not null) break;
                     }
                     var gilAfter = await Game.Run(Gil).ConfigureAwait(false);
