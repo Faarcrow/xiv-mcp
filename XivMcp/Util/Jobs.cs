@@ -149,14 +149,16 @@ internal sealed class JobManager : IDisposable, ICache
 
     /// <summary>
     /// The memory of the running step if it is <paramref name="tool"/> (a copy), or null — also when the tool isn't running as a job
-    /// step. Lets a step continue where an earlier run of it stopped instead of starting over.
+    /// step. Lets a step continue where an earlier run of it stopped instead of starting over. With <paramref name="lend"/> false,
+    /// only the step's own memory (a retry or resume of this very step), never one lent by an earlier step.
     /// </summary>
-    public JsonObject? StepMemory(string tool)
+    public JsonObject? StepMemory(string tool, bool lend = true)
     {
         lock (sync)
         {
             if (runningJobId is not { } id || jobs.FirstOrDefault(j => j.Id == id) is not { } job || job.Current is not { } step || step.Tool != tool) return null;
             if (step.Memory is { } own) return own.DeepClone() as JsonObject;
+            if (!lend) return null;
             // A step added in place of one that failed or was skipped (update_job replace_remaining) continues where that one
             // stopped: the most recent earlier unfinished step of the same tool lends its memory. A finished one doesn't, so
             // running the same list again after it completed starts over. The tool checks the memory still fits (same list).

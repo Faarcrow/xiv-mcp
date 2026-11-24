@@ -335,7 +335,9 @@ internal static class CustomDeliveryTools
         var c = found[0];
         var levels = levelsOf[c.Name];
         // A run of this step after the player ranked the client up (a resume, a retry) must not start on the next rank's requests.
-        var memory = playerRanksUp ? JobManager.Instance?.StepMemory(DeliverTool) : null;
+        // Only this step's own memory counts: a step added after a skipped one is meant for the next rank, and the skipped step's
+        // memory would wrongly say the rank-up already happened.
+        var memory = playerRanksUp ? JobManager.Instance?.StepMemory(DeliverTool, lend: false) : null;
         if (RankUpMemory.RankedUpSince(memory, c.Name, c.Rank))
             return new { client = c.Name, delivered = 0, rank = c.Rank, done = true, rankedUp = PlayerRankUp.AlreadyRankedUp(c.Name, c.Rank) };
         if (!c.Unlocked) throw new ToolException($"{c.Name} is not unlocked yet.");
