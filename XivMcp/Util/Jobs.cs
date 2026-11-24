@@ -149,14 +149,16 @@ internal sealed class JobManager : IDisposable, ICache
 
     /// <summary>
     /// The memory of the running step if it is <paramref name="tool"/> (a copy), or null — also when the tool isn't running as a job
-    /// step. Lets a step continue where an earlier run of it stopped instead of starting over.
+    /// step. Lets a step continue where an earlier run of it stopped instead of starting over. With <paramref name="lend"/> false,
+    /// only the step's own memory (a retry or resume of this very step), never one lent by an earlier step.
     /// </summary>
-    public JsonObject? StepMemory(string tool)
+    public JsonObject? StepMemory(string tool, bool lend = true)
     {
         lock (sync)
         {
             if (runningJobId is not { } id || jobs.FirstOrDefault(j => j.Id == id) is not { } job || job.Current is not { } step || step.Tool != tool) return null;
             if (step.Memory is { } own) return own.DeepClone() as JsonObject;
+            if (!lend) return null;
             // A step added in place of one that failed or was skipped (update_job replace_remaining) continues where that one
             // stopped: the most recent earlier unfinished step of the same tool lends its memory. A finished one doesn't, so
             // running the same list again after it completed starts over. The tool checks the memory still fits (same list).
@@ -181,6 +183,42 @@ internal sealed class JobManager : IDisposable, ICache
             Changed();
         }
     }
+
+    /// <summary>
+    /// Puts steps right after the running step, if it is <paramref name="tool"/>: for a step that plans the rest of its own job
+    /// (do_custom_deliveries after a rank-up). They take the place of the unfinished steps an earlier run of the same step added, and
+    /// every other step stays (see <see cref="XivMcp.Jobs.StepInsert"/>). Their ids get the running step's id in front. False when
+    /// the tool is not running as a job step.
+    /// </summary>
+    public bool InsertAfterCurrent(string tool, List<Step> steps)
+    {
+        lock (sync)
+        {
+            if (runningJobId is not { } id || jobs.FirstOrDefault(j => j.Id == id) is not { } job || job.Current is not { } step || step.Tool != tool) return false;
+            foreach (var s in steps) s.Id = XivMcp.Jobs.StepInsert.Id(step.Id, s.Id);
+            static bool Unfinished(Step s) => s.State is StepState.Queued or StepState.Failed or StepState.Interrupted;
+            if (steps.Count > 0) Validate(steps, new Job { Steps = XivMcp.Jobs.StepInsert.Insert(job.Steps, step, [], s => s.Id, Unfinished) });
+            job.Steps = XivMcp.Jobs.StepInsert.Insert(job.Steps, step, steps, s => s.Id, Unfinished);
+            AddLog(job, $"{step.Id}: added {steps.Count} step(s) after it.");
+            Changed();
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// While the running step (if it is <paramref name="tool"/>) has the player in a conversation they want to see, such as a client's
+    /// rank-up story: when it fails or is stopped then, the runner leaves the game as it is instead of recovering.
+    /// </summary>
+    public void PlayerInConversation(string tool, bool inConversation)
+    {
+        lock (sync)
+        {
+            if (runningJobId is not { } id || jobs.FirstOrDefault(j => j.Id == id)?.Current is not { } step || step.Tool != tool) return;
+            playerInConversation = inConversation;
+        }
+    }
+
+    private bool playerInConversation;
 
     public string? RunningJobName
     {
@@ -363,6 +401,7 @@ internal sealed class JobManager : IDisposable, ICache
                 step.Attempts++;
                 runningJobId = job.Id;
                 runningPassive = PassiveTools.Contains(step.Tool);
+                playerInConversation = false;
                 stepCts = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
                 AddLog(job, $"Step {step.Id}: {step.Tool} started.");
                 Changed();
@@ -384,7 +423,10 @@ internal sealed class JobManager : IDisposable, ICache
             catch (Exception ex) { error = $"{ex.GetType().Name}: {ex.Message}"; Svc.Log.Error(ex, $"[MCP] Job step {step.Tool} failed"); }
 
             // A step that failed or was stopped can leave the character in a conversation or window that blocks everything after it.
-            var recovery = (error is not null || interrupted) && !runningPassive && !shutdown.IsCancellationRequested ? await Recover(job).ConfigureAwait(false) : null;
+            bool leftToPlayer;
+            lock (sync) leftToPlayer = playerInConversation;
+            var recovery = XivMcp.Jobs.StepRecovery.ShouldRecover(error is not null || interrupted, runningPassive, shutdown.IsCancellationRequested, leftToPlayer)
+                ? await Recover(job).ConfigureAwait(false) : null;
 
             // Failures that only mean the game was briefly busy (still loading after travel, the market board not answering) are run again.
             var autoRetry = error is not null && !interrupted && XivMcp.Jobs.StepRetry.ShouldRetry(error, step.Attempts);
@@ -396,6 +438,8 @@ internal sealed class JobManager : IDisposable, ICache
 
             lock (sync)
             {
+                if ((error is not null || interrupted) && leftToPlayer)
+                    AddLog(job, $"{step.Id}: no recovery: the player is in a conversation they want to see.");
                 if (recovery is { Actions.Count: > 0 } || recovery?.Problem is not null)
                     AddLog(job, $"{step.Id}: recovery: {string.Join(" ", recovery.Actions)}{(recovery.Problem is { } p ? $" Not free: {p}" : " The character is free.")}");
                 runningJobId = null;

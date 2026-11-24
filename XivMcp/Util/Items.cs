@@ -60,6 +60,28 @@ internal static class Items
         return count;
     }
 
+    /// <summary>
+    /// How many of an item are in the bags at <paramref name="minCollectability"/> or more, as the game's own count does with a
+    /// minimum collectability. Framework thread.
+    /// </summary>
+    public static unsafe int CountInBags(uint itemId, int minCollectability)
+    {
+        var im = InventoryManager.Instance();
+        if (im == null) return 0;
+        var count = 0;
+        foreach (var bag in Bags)
+        {
+            var c = im->GetInventoryContainer(bag);
+            if (c == null) continue;
+            for (var i = 0; i < c->Size; i++)
+            {
+                var slot = c->GetInventorySlot(i);
+                if (slot != null && slot->ItemId == itemId && slot->SpiritbondOrCollectability >= minCollectability) count += slot->Quantity;
+            }
+        }
+        return count;
+    }
+
     /// <summary>The armoury chest's containers, one per equipment slot.</summary>
     public static readonly InventoryType[] Armoury =
     [

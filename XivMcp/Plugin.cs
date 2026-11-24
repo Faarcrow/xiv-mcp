@@ -232,6 +232,8 @@ public sealed class Plugin : IDalamudPlugin
         windows.RemoveAllWindows();
         pluginApi.Dispose();
         probe.Dispose();
+        // Before the jobs stop: a delivery's own cleanup runs on the framework, which may not run again now.
+        SatisfierBridge.RestoreTurnInLimits();
         jobs?.Dispose();
         wakeUp.Dispose();
         Server.Dispose();
