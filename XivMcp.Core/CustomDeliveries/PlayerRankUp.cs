@@ -18,6 +18,9 @@ public static class PlayerRankUp
     /// <summary>How long XIV MCP waits at most, also while the player is in a conversation.</summary>
     public static readonly TimeSpan HardLimit = TimeSpan.FromHours(2);
 
+    /// <summary>How long the game gets to count a delivery after XIV MCP pressed Hand Over (in game it took a second or two).</summary>
+    public static readonly TimeSpan HandOverLimit = TimeSpan.FromSeconds(10);
+
     /// <summary>How long the client's story may hold the character after the rank changed.</summary>
     public static readonly TimeSpan StoryLimit = TimeSpan.FromMinutes(10);
 
@@ -37,6 +40,14 @@ public static class PlayerRankUp
               $"back to {client} and asks again."
             : $", and {item} is not in your bags any more. Retry this step to have it made again and be asked again, or skip it.") +
         (inConversation ? " You are still in a conversation, which XIV MCP leaves alone." : "");
+
+    /// <param name="windowOpen">The hand-over window is still open: the click did not land, and no story started.</param>
+    public static string NotCounted(string item, string client, bool windowOpen) =>
+        $"XIV MCP pressed Hand Over for {item}, but {client}'s deliveries left did not go down within {HandOverLimit.TotalSeconds:0} seconds, " +
+        (windowOpen
+            ? "and the hand-over window was still open, so the click did not land. Retry this step to hand it in again."
+            : "and the hand-over window closed. Check get_custom_deliveries: when the delivery went in after all, skip this step; otherwise " +
+              "retry it.");
 
     public static string WentInShort(string item, string client) =>
         $"{item} went in, but {client} did not reach the next rank: a delivery below the top collectability tier gives less " +
@@ -61,15 +72,20 @@ public static class PlayerRankUp
         $"{client} reached rank {rank} in an earlier run of this step: the rank-up was handed in, nothing more to deliver here.";
 }
 
-/// <summary>How the wait for the hand-in ended. <see cref="WentIn"/>: the delivery is counted, the rank not (yet) changed; see <see cref="PlayerRankUp.AfterStory"/>.</summary>
-public enum HandIn { Wait, RankedUp, WentIn, WentInShort, TimedOut, TimedOutInConversation }
+/// <summary>
+/// How the wait for the hand-in ended. <see cref="WentIn"/>: the delivery is counted, the rank not (yet) changed; see
+/// <see cref="PlayerRankUp.AfterStory"/>. <see cref="NotCounted"/>: XIV MCP pressed Hand Over, but the delivery was not counted.
+/// </summary>
+public enum HandIn { Wait, RankedUp, WentIn, WentInShort, NotCounted, TimedOut, TimedOutInConversation }
 
 /// <summary>
 /// The wait for the player's hand-in, one look per poll. A conversation counts as the player's only when it started after they were
 /// asked (they were seen out of one first): the client's menu Satisfier left open, or any other one held from before, does not keep
 /// the wait going, and recovery may close it. The player's own one is left alone (<see cref="PlayersConversation"/>).
+/// <paramref name="handedOver"/>: XIV MCP pressed Hand Over itself, so the delivery has <see cref="PlayerRankUp.HandOverLimit"/> to be
+/// counted instead of the player's time to hand it in.
 /// </summary>
-public sealed class HandInWait(DateTime asked, int deliveriesLeft)
+public sealed class HandInWait(DateTime asked, int deliveriesLeft, bool handedOver = false)
 {
     private bool freeSinceAsked;
     private int wentInPolls;
@@ -89,6 +105,7 @@ public sealed class HandInWait(DateTime asked, int deliveriesLeft)
         wentInPolls = deliveriesLeftNow < deliveriesLeft ? wentInPolls + 1 : 0;
         if (wentInPolls >= 2) return HandIn.WentIn;
         var waited = now - asked;
+        if (handedOver && wentInPolls == 0 && waited > PlayerRankUp.HandOverLimit) return HandIn.NotCounted;
         if (waited > PlayerRankUp.HardLimit) return PlayersConversation ? HandIn.TimedOutInConversation : HandIn.TimedOut;
         return waited > PlayerRankUp.Limit && !PlayersConversation ? HandIn.TimedOut : HandIn.Wait;
     }

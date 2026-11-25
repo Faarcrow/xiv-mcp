@@ -656,6 +656,7 @@ public class PlayerRankUpTests
                      PlayerRankUp.Ask("Medical Supplies", "Charlemend"), PlayerRankUp.TimedOut("Medical Supplies", "Charlemend", true, false),
                      PlayerRankUp.TimedOut("Medical Supplies", "Charlemend", false, true), PlayerRankUp.WentInShort("Medical Supplies", "Charlemend"),
                      PlayerRankUp.StillInStory("Charlemend"), PlayerRankUp.HeldWithoutWindow("Charlemend"), PlayerRankUp.AlreadyRankedUp("Charlemend", 3),
+                     PlayerRankUp.NotCounted("Medical Supplies", "Charlemend", true), PlayerRankUp.NotCounted("Medical Supplies", "Charlemend", false),
                  })
             Assert.DoesNotMatch(@"(n't|'re|'ve|'ll|'d|(it|that|there|what)'s|I'm)", text);
     }
@@ -719,6 +720,30 @@ public class PlayerRankUpTests
         var wait = new HandInWait(Asked, deliveriesLeft: 3);
         Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddMinutes(2), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
         Assert.Equal(HandIn.WentIn, wait.Poll(Asked.AddMinutes(2.1), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
+    }
+
+    [Fact]
+    public void A_hand_over_by_xiv_mcp_must_be_counted_within_seconds()
+    {
+        var wait = new HandInWait(Asked, deliveriesLeft: 3, handedOver: true);
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddSeconds(2), inConversation: true, rankChanged: false, deliveriesLeftNow: 3));
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddSeconds(8), inConversation: true, rankChanged: false, deliveriesLeftNow: 3));
+        Assert.Equal(HandIn.NotCounted, wait.Poll(Asked.AddSeconds(12), inConversation: true, rankChanged: false, deliveriesLeftNow: 3));
+    }
+
+    [Fact]
+    public void A_hand_over_counted_at_the_limit_still_gets_its_second_look()
+    {
+        var wait = new HandInWait(Asked, deliveriesLeft: 3, handedOver: true);
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddSeconds(10.5), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
+        Assert.Equal(HandIn.WentIn, wait.Poll(Asked.AddSeconds(12.5), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
+    }
+
+    [Fact]
+    public void The_player_handing_in_is_not_held_to_the_hand_over_limit()
+    {
+        var wait = new HandInWait(Asked, deliveriesLeft: 3);
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddMinutes(5), inConversation: false, rankChanged: false, deliveriesLeftNow: 3));
     }
 
     [Fact]
