@@ -88,8 +88,17 @@ public static class QuestionableWorkarounds
         "Questionable has Artisan craft the quest's items again, using up materials, and can stay in an open shop.",
         "15.756.3.64");
 
+    // Once its priority list is done Questionable picks its next quest itself (QuestController, "New quest") and starts its tasks, a
+    // teleport often first, within a second or two: faster than XIV MCP sees the quest done (seen 2026-11-25, Qitari dailies and
+    // Chief Concerns, both followed by a teleport to Garlemald). StopAfterCurrentQuest is checked as its quest completes, before that
+    // pick; it is not on the IPC, and every Stop clears it.
+    public static readonly Workaround StopAfterRound = new("stop_after_round",
+        "On the last quest XIV MCP gave Questionable, turns on its stop-after-this-quest flag, so it stops as that quest is done.",
+        "Questionable goes on to a quest of its own choosing (from the journal or the main scenario), often with a teleport.",
+        "15.756.3.64");
+
     public static IReadOnlyList<Workaround> All { get; } =
-        [PickJob, BackToAcceptedJob, CloseBlockingWindow, AcceptTogether, ConfirmHqTurnIn, SkipMeldedStep, SkipOwnedItemsStep];
+        [PickJob, BackToAcceptedJob, CloseBlockingWindow, AcceptTogether, ConfirmHqTurnIn, SkipMeldedStep, SkipOwnedItemsStep, StopAfterRound];
 }
 
 /// <summary>What XIV MCP does where Satisfier falls short in custom deliveries with player_ranks_up (deliver_custom_delivery and the jobs that run it).</summary>
