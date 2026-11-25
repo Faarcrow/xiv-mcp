@@ -75,8 +75,12 @@ public sealed record FashionSet(IReadOnlyList<FashionPiece> Pieces, IReadOnlyLis
 
 public sealed record FashionHint(string Hint, string Slot);
 
-/// <summary>This week's Fashion Report as fashionreportxiv.com publishes it (its /api/report-state).</summary>
-public sealed record WeeklyReport(int Week, string Theme, IReadOnlyList<FashionHint> Hints, FashionSet Easy80, FashionSet Easy100, string? Theorycraft)
+/// <summary>
+/// This week's Fashion Report as fashionreportxiv.com publishes it (its /api/report-state). <see cref="Dyes"/> is the week's exact
+/// color per left-side slot ("head" → "Charcoal Grey"), as the site has found them so far.
+/// </summary>
+public sealed record WeeklyReport(int Week, string Theme, IReadOnlyList<FashionHint> Hints, FashionSet Easy80, FashionSet Easy100, string? Theorycraft,
+                                  IReadOnlyDictionary<string, string>? Dyes = null, bool DyesFresh = false)
 {
 
     public static WeeklyReport Parse(string json)
@@ -93,8 +97,35 @@ public sealed record WeeklyReport(int Week, string Theme, IReadOnlyList<FashionH
             hints,
             Set(root, "easy80"),
             Set(root, "easy100"),
-            root.TryGetProperty("links", out var links) && links.TryGetProperty("theorycraft", out var t) ? t.GetString() : null);
+            root.TryGetProperty("links", out var links) && links.TryGetProperty("theorycraft", out var t) ? t.GetString() : null,
+            root.TryGetProperty("dyeData", out var dd) && dd.ValueKind == JsonValueKind.Object
+                ? dd.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.Object)
+                    .Select(p => (Slot: p.Name, Dye: DyeName(Text(p.Value, "plus2")))).Where(p => p.Dye is not null)
+                    .ToDictionary(p => p.Slot, p => p.Dye!)
+                : null,
+            root.TryGetProperty("dyesFresh", out var df) && df.ValueKind == JsonValueKind.True);
     }
+
+    /// <summary>The item names fashionreportxiv.com lists for one hint (its /api/hint); empty when it has none yet.</summary>
+    public static IReadOnlyList<string> HintItems(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("found", out var found) || found.ValueKind != JsonValueKind.True || !root.TryGetProperty("items", out var items))
+            return [];
+        return items.EnumerateArray().Select(i => Text(i, "name")).Where(n => n.Length > 0).Distinct().ToList();
+    }
+
+    /// <summary>
+    /// The exact dye per slot to aim for: the week's colors when the site has them, otherwise the colors of the set (its pieces' and
+    /// the ones for slots it has no piece for). None while the site has this week's hints but has not found the dyes yet
+    /// (<paramref name="known"/> false): until then its dyes are the week before's, as the site itself says.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> WantedDyes(FashionSet set, bool known = true) =>
+        !known ? new Dictionary<string, string>()
+        : Dyes is { Count: > 0 } week ? week
+        : set.Pieces.Where(p => p.Dye is not null).Select(p => (p.Slot, Dye: p.Dye!)).Concat(set.OtherDyes)
+              .GroupBy(d => d.Slot).ToDictionary(g => g.Key, g => g.First().Dye);
 
     private static FashionSet Set(JsonElement root, string name)
     {
@@ -128,26 +159,6 @@ public sealed record WeeklyReport(int Week, string Theme, IReadOnlyList<FashionH
 
 /// <summary>Where an item for the Fashion Report could come from.</summary>
 public enum ItemSource { None, Have, Retainer, GlamourDresser, Armoire, Vendor, Market, Duty }
-
-/// <summary>Where a player has an item, and whether it can be bought from a vendor or dropped in a duty.</summary>
-public sealed record ItemWhereabouts(bool InBags, string? Retainer, bool InGlamourDresser, bool InArmoire, bool AtVendor, bool FromDuty, bool OnMarket = false);
-
-public static class FashionPlan
-{
-    /// <summary>
-    /// The cheapest way to the item: carried already, then stored (retainer, glamour dresser, armoire), then bought from a vendor,
-    /// then from the market board (tradable items), and a dungeon last because it takes longest.
-    /// </summary>
-    public static ItemSource Choose(ItemWhereabouts w) =>
-        w.InBags ? ItemSource.Have
-        : w.Retainer is not null ? ItemSource.Retainer
-        : w.InGlamourDresser ? ItemSource.GlamourDresser
-        : w.InArmoire ? ItemSource.Armoire
-        : w.AtVendor ? ItemSource.Vendor
-        : w.OnMarket ? ItemSource.Market
-        : w.FromDuty ? ItemSource.Duty
-        : ItemSource.None;
-}
 
 /// <summary>How many dyes the Fashion Report job buys, so every dye step finds one in the bags.</summary>
 public static class FashionDyes
@@ -227,14 +238,15 @@ public static class FashionApproval
     /// <summary>
     /// Why to ask: judging is closed, or the set is not this week's (then also <paramref name="outfit"/>, the lines saying what would be
     /// worn, bought and dyed, so the player sees it). Empty when judging is open and the set is this week's: then nobody is asked.
+    /// Without <paramref name="setNeeded"/> (an outfit planned from the hints), only the hints have to be this week's.
     /// </summary>
-    public static IReadOnlyList<string> Reasons(ReportStatus status, IReadOnlyList<string> outfit)
+    public static IReadOnlyList<string> Reasons(ReportStatus status, IReadOnlyList<string> outfit, bool setNeeded = true)
     {
         var reasons = new List<string>();
         if (!status.JudgingOpen)
             reasons.Add($"Judging is closed until {status.JudgingOpensUtc.ToString("ddd d MMM HH:mm", CultureInfo.InvariantCulture)} UTC: " +
                         "the outfit would be prepared, not presented.");
-        if (!status.SetIsThisWeeks)
+        if (!status.HintsAreThisWeeks || setNeeded && !status.SetIsThisWeeks)
         {
             reasons.Add(!status.HintsAreThisWeeks
                 ? $"This outfit is for week {status.Week}, an earlier week. This week is week {status.CurrentWeek}."

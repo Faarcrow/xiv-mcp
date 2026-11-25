@@ -26,7 +26,7 @@ namespace XivMcp.Tools;
 /// The Fashion Report and what it needs: putting on gear, taking items out of the glamour dresser or armoire, this week's report
 /// (fashionreportxiv.com), presenting to the Masked Rose, and one job that does all of it for a ready-made set.
 /// </summary>
-internal static class FashionTools
+internal static partial class FashionTools
 {
     private const string ReportUrl = "https://fashionreportxiv.com/api/report-state";
     private const uint MaskedRose = 1025176;
@@ -133,50 +133,62 @@ internal static class FashionTools
         yield return new McpTool
         {
             Name = "get_fashion_report",
-            Description = "This week's Fashion Report from fashionreportxiv.com: the theme, the hint per slot, and the ready-made 'easy 80' and 'easy " +
-                          "100' sets with their dyes. For each piece: whether the player has it and where (bags, armoury chest, a retainer, the " +
-                          "glamour dresser, the armoire), whether a vendor sells it, and whether the player has the dye. 'week' is the site's " +
-                          "week and 'currentWeek' the week it is now. From the Tuesday reset until the site posts the new week (some time after " +
-                          "judging opens) the theme, hints and set are left out, as they are an earlier week's; the site posts the hints first, " +
-                          "so for a while the theme and hints are there and the set is not (setIsThisWeeks false). Also when judging opens and " +
-                          "closes (Friday 08:00 UTC to the Tuesday reset; both ahead before Friday), " +
-                          "whether the player unlocked the Fashion Report, and the attempts left and high score once the Masked Rose was talked " +
-                          "to this session. The site's guide is kept for 5 minutes ('fetchedAt'), shared with complete_fashion_report. " +
-                          "complete_fashion_report does the rest. Goes online (Online lookups in /xivmcp).",
-            InputSchema = """{ "type": "object", "properties": { "set": { "type": "string", "enum": ["easy80", "easy100"], "description": "Which set to check (default easy80)." } } }""",
+            Description = "This week's Fashion Report: the theme and the hint per slot from fashionreportxiv.com, and 'plan': the outfit " +
+                          "complete_fashion_report would put together to reach 'target' points (80, the default: the full MGP; or 100, which " +
+                          "also gives the Fashion Leader title once), from the items the site lists for each hint, the week's dyes and what " +
+                          "the player has (worn, bags, armoury chest, retainers, armoire; the dresser only for the site's own piece), with the " +
+                          "expected score, where each piece comes from and about how much gil buying it all costs ('gil'). Nothing is changed. " +
+                          "'hasLeaderTitle' says whether the player has the title already (then 100 adds nothing over 80; null until the game " +
+                          "has sent the titles). 'siteOutfit' is the site's own ready-made outfit for that score, for reference. 'week' is the " +
+                          "site's week and 'currentWeek' the week it is now. From the Tuesday reset until the site posts the new week (some " +
+                          "time after judging opens) the theme, hints and plan are left out, as they are an earlier week's. The site posts the " +
+                          "hints first, then the dyes, then its outfits: the plan needs only the hints, and leaves dyes out until the site has " +
+                          "found them (dyesKnown). Also when judging opens and closes (Friday 08:00 UTC to the Tuesday reset; both ahead before " +
+                          "Friday), whether the player unlocked the Fashion Report, and the attempts left and high score once the Masked Rose " +
+                          "was talked to this session. The site's guide is kept for 5 minutes ('fetchedAt'), shared with " +
+                          "complete_fashion_report. complete_fashion_report does the rest. Goes online (Online lookups in /xivmcp).",
+            InputSchema = """
+                {
+                  "type": "object",
+                  "properties": {
+                    "target": { "type": "integer", "enum": [80, 100], "description": "The score to aim for: 80 (default, the full MGP) or 100 (also the Fashion Leader title)." },
+                    "max_market_price": { "type": "integer", "minimum": 1, "description": "Most gil per piece on the market board (default 50000)." }
+                  }
+                }
+                """,
             Handler = async (args, ct) =>
             {
+                var target = TargetArg(args);
                 var (report, fetchedAt) = await FetchReport(ct).ConfigureAwait(false);
-                var setName = args.String("set") ?? "easy80";
-                var set = setName == "easy100" ? report.Easy100 : report.Easy80;
+                var set = target == 100 ? report.Easy100 : report.Easy80;
                 var status = ReportStatus.Of(report, set, DateTime.UtcNow);
                 var unlocked = await Game.RunLoggedIn(Unlocked).ConfigureAwait(false);
                 var state = await Game.Run(ReportState).ConfigureAwait(false);
+                var hasTitle = await Game.Run(HasLeaderTitle).ConfigureAwait(false);
                 var facts = new
                 {
-                    week = status.Week, currentWeek = status.CurrentWeek, hintsAreThisWeeks = status.HintsAreThisWeeks, set = setName, setIsThisWeeks = status.SetIsThisWeeks,
-                    setPostedAt = status.SetPostedUtc, fetchedAt,
+                    week = status.Week, currentWeek = status.CurrentWeek, hintsAreThisWeeks = status.HintsAreThisWeeks, target, hasLeaderTitle = hasTitle, fetchedAt,
                     judgingOpen = status.JudgingOpen, judgingOpensAt = status.JudgingOpensUtc, judgingClosesAt = status.JudgingClosesUtc,
                     unlocked, unlockQuest = unlocked ? null : await Game.Run(UnlockQuestText).ConfigureAwait(false),
                     attemptsLeft = state?.Remaining, highScore = state?.HighScore,
                 };
                 if (!status.HintsAreThisWeeks) return facts;
-                if (!status.SetIsThisWeeks)
-                    return new
-                    {
-                        facts.week, facts.currentWeek, theme = report.Theme, hints = report.Hints.Select(h => new { h.Slot, h.Hint }),
-                        facts.hintsAreThisWeeks, facts.set, facts.setIsThisWeeks, facts.setPostedAt, facts.fetchedAt,
-                        facts.judgingOpen, facts.judgingOpensAt, facts.judgingClosesAt, facts.unlocked, facts.unlockQuest,
-                        facts.attemptsLeft, facts.highScore,
-                    };
-                var pieces = await Game.RunLoggedIn(() => set.Pieces.Select(p => Inspect(p, retainers)).ToList()).ConfigureAwait(false);
+                // The plan complete_fashion_report would make: replacing a dye the player put on only when nothing else reaches the score.
+                var maxMarketPrice = args.Int("max_market_price", 50_000, 1, int.MaxValue);
+                var plan = await PlanOutfit(report, set, target, retainers, maxMarketPrice, false, ct).ConfigureAwait(false);
+                if (!plan.Outfit.ReachesTarget) plan = await PlanOutfit(report, set, target, retainers, maxMarketPrice, true, ct).ConfigureAwait(false);
                 return new
                 {
                     facts.week, facts.currentWeek, theme = report.Theme,
                     hints = report.Hints.Select(h => new { h.Slot, h.Hint }),
-                    facts.hintsAreThisWeeks, facts.set, facts.setIsThisWeeks, facts.setPostedAt, facts.fetchedAt,
-                    pieces = pieces.Select(p => p.Describe()),
-                    otherDyes = set.OtherDyes.Select(d => new { slot = d.Slot, dye = d.Dye }),
+                    facts.hintsAreThisWeeks, facts.target, facts.hasLeaderTitle, facts.fetchedAt,
+                    plan = plan.Describe(), note = TitleNote(target, hasTitle),
+                    siteOutfit = new
+                    {
+                        isThisWeeks = status.SetIsThisWeeks, postedAt = status.SetPostedUtc,
+                        pieces = status.SetIsThisWeeks ? set.Pieces.Select(p => new { slot = p.Slot, item = p.Item, dye = p.Dye }) : null,
+                        otherDyes = status.SetIsThisWeeks ? set.OtherDyes.Select(d => new { slot = d.Slot, dye = d.Dye }) : null,
+                    },
                     facts.judgingOpen, facts.judgingOpensAt, facts.judgingClosesAt, facts.unlocked, facts.unlockQuest,
                     facts.attemptsLeft, facts.highScore,
                     theorycraft = report.Theorycraft,
@@ -189,8 +201,8 @@ internal static class FashionTools
             Name = "present_fashion_report",
             Description = "Presents the player's outfit to the Masked Rose at the Gold Saucer for this week's Fashion Report (Friday to the Tuesday " +
                           "reset): puts on the given 'items' first (from the bags or armoury chest), goes to the Masked Rose, chooses to be " +
-                          "judged and confirms, and returns the score. For an outfit of the player's choosing; complete_fashion_report gets and dyes the " +
-                          "site's ready-made set and ends with this. Right before talking to her it uses a Gold Saucer VIP Card (more MGP) unless " +
+                          "judged and confirms, and returns the score. For an outfit of the player's choosing; complete_fashion_report puts together an outfit " +
+                          "for 80 or 100 points and ends with this. Right before talking to her it uses a Gold Saucer VIP Card (more MGP) unless " +
                           "its bonus is already active, if the setting in /xivmcp says so (on by default) or 'use_vip_card' is true. " +
                           "Pieces complete_fashion_report bought for the report are thrown away after judging when cheap enough, if the setting says so and the player approves in game. The look counts as worn, including glamours and dyes. Each week has 4 " +
                           "attempts; the best one counts.",
@@ -220,19 +232,24 @@ internal static class FashionTools
         yield return new McpTool
         {
             Name = "complete_fashion_report",
-            Description = "Does this week's Fashion Report with a ready-made set from fashionreportxiv.com ('easy80' by default, or 'easy100'): " +
-                          "plans how to get each piece the player doesn't carry (from a retainer at a summoning bell, the glamour dresser or " +
-                          "armoire in an inn room, a vendor, the market board up to 'max_market_price', or a dungeon with AutoDuty), the dyes, and starts one background job that gets the pieces, dyes them, puts " +
-                          "them on and presents the outfit to the Masked Rose. Pieces with no known way to get them stop it before it starts " +
-                          "(see get_item_sources). When judging is closed (then the job only prepares the outfit) or the site's set is not this " +
-                          "week's yet (see get_fashion_report), the player is asked in game first, with the reasons; if they decline, the error " +
-                          "repeats what they were told. Follow it with get_job. Goes online for the site's guide (Online lookups in /xivmcp; it is " +
-                          "kept for 5 minutes, shared with get_fashion_report); each step follows its own module.",
+            Description = "Does this week's Fashion Report, aiming for 'target' points: 80 (the default: the full MGP) or 100 (also the " +
+                          "Fashion Leader title, given once: when the player has it, 100 adds nothing over 80). Plans " +
+                          "the cheapest outfit that reaches it (see get_fashion_report's 'plan'): for each hint, any item fashionreportxiv.com " +
+                          "lists for it, and the week's exact dyes, preferring what the player wears, then carries, then has with a retainer or " +
+                          "in the armoire (the glamour dresser only for the site's own piece), then a vendor, then the market board up to " +
+                          "'max_market_price', then a dungeon with AutoDuty for the site's own pieces. Empty slots get a piece, since they " +
+                          "score nothing. Pieces with no dye, or bought for the report, are dyed freely; a dye the player put on is only " +
+                          "replaced after they approve in game. Then it starts one background job that gets the pieces, buys the dyes, dyes, " +
+                          "puts the outfit on and presents it to the Masked Rose. When the score can't be reached it says how far the best " +
+                          "outfit gets and starts nothing. The result's plan says about how much gil it spends ('gil'). When judging is closed (then the job only prepares the outfit) or the site's hints " +
+                          "are not this week's yet, the player is asked in game first, with the reasons and the planned outfit; if they " +
+                          "decline, the error repeats what they were told. Until the site has found the week's dyes, the plan leaves them out. Follow it with get_job. Goes online for the site's guide and hint lists (Online lookups in /xivmcp; " +
+                          "kept for 5 minutes, shared with get_fashion_report) and market prices; each step follows its own module.",
             InputSchema = """
                 {
                   "type": "object",
                   "properties": {
-                    "set": { "type": "string", "enum": ["easy80", "easy100"], "description": "Which set (default easy80)." },
+                    "target": { "type": "integer", "enum": [80, 100], "description": "The score to aim for: 80 (default, the full MGP) or 100 (also the Fashion Leader title)." },
                     "max_market_price": { "type": "integer", "minimum": 1, "description": "Most gil per piece on the market board (default 50000)." }
                   }
                 }
@@ -242,64 +259,41 @@ internal static class FashionTools
             {
                 if (config.CorePolicy.ModeFor("online", Access.Read) == PolicyMode.Deny)
                     throw new ToolException("This reads the weekly report online: allow 'Online lookups' in /xivmcp → Modules.");
-                var setName = args.String("set") ?? "easy80";
+                var target = TargetArg(args);
+                var maxMarketPrice = args.Int("max_market_price", 50_000, 1, int.MaxValue);
                 var (report, _) = await FetchReport(ct).ConfigureAwait(false);
-                var set = setName == "easy100" ? report.Easy100 : report.Easy80;
-                if (set.Pieces.Count == 0) throw new ToolException($"fashionreportxiv.com has no {setName} set this week yet.");
-                await ApproveUnready(ReportStatus.Of(report, set, DateTime.UtcNow), set, args.Caller, ct).ConfigureAwait(false);
-                var pieces = await Game.RunLoggedIn(() => set.Pieces.Select(p => Inspect(p, retainers)).ToList()).ConfigureAwait(false);
-                // Pieces with no other way: a dungeon that drops them, if AutoDuty can run one.
-                var duties = new Dictionary<uint, (uint TerritoryType, string Name, string Mode)>();
-                foreach (var p in pieces.Where(p => p.Source == ItemSource.None))
-                    if (await DutyTools.FindFarmDuty(p.ItemId, ct).ConfigureAwait(false) is { } duty) duties[p.ItemId] = duty;
-                pieces = pieces.Select(p => duties.ContainsKey(p.ItemId) ? p with { Source = ItemSource.Duty } : p).ToList();
-                var dyes = await Game.Run(() => DyesToBuy(set, pieces)).ConfigureAwait(false);
-                return Plan(report, setName, set, pieces, jobs(), client(), args.Int("max_market_price", 50_000, 1, int.MaxValue), duties, dyes);
+                var set = target == 100 ? report.Easy100 : report.Easy80;
+                // Dyes the player put on are only replaced when nothing else reaches the score, and only once they approve; the outfit
+                // they are then shown for starting is the one the job puts together.
+                var plan = await PlanOutfit(report, set, target, retainers, maxMarketPrice, false, ct).ConfigureAwait(false);
+                if (!plan.Outfit.ReachesTarget
+                    && await PlanOutfit(report, set, target, retainers, maxMarketPrice, true, ct).ConfigureAwait(false) is { Outfit.ReachesTarget: true } replacing
+                    && await ApproveDyeReplacements(replacing, args.Caller, ct).ConfigureAwait(false))
+                    plan = replacing;
+                if (!plan.Outfit.ReachesTarget)
+                    throw new ToolException($"No outfit reaches {plan.Target} points with what you have and can buy without replacing a dye you " +
+                                            $"put on: the best gets {plan.Outfit.Score}. Plan: {System.Text.Json.JsonSerializer.Serialize(plan.Describe())}");
+                await ApproveUnready(ReportStatus.Of(report, set, DateTime.UtcNow), plan.Lines(), args.Caller, ct).ConfigureAwait(false);
+                var judging = FashionSchedule.IsJudgingOpen(DateTime.UtcNow);
+                var owned = await Game.Run(() => DyesOwned(plan)).ConfigureAwait(false);
+                var steps = Steps(plan, maxMarketPrice, judging, owned);
+                if (steps.Count == 0) throw new ToolException("Nothing to do: judging is closed (Friday to the Tuesday reset) and you are wearing the outfit already.");
+                var job = jobs().Start($"Fashion Report: {report.Theme}", steps, client());
+                return new
+                {
+                    started = JobManager.Describe(job), week = report.Week, theme = report.Theme, target, plan = plan.Describe(),
+                    note = string.Join(" ", new[]
+                    {
+                        judging ? null : "Judging is closed until Friday 08:00 UTC: the job only prepares the outfit; present it then with present_fashion_report.",
+                        TitleNote(target, await Game.Run(HasLeaderTitle).ConfigureAwait(false)),
+                    }.OfType<string>()) is { Length: > 0 } n ? n : null,
+                    poll = $"get_job id={job.Id}",
+                };
             },
         };
     }
 
     // ---------------------------------------------------------------- planning
-
-    /// <summary>One piece of the set as the player has it: the item, where it is, and its dye.</summary>
-    private sealed record PieceState(FashionPiece Piece, uint ItemId, string Name, ItemWhereabouts Where, ItemSource Source,
-                                     uint StainId, string? DyeItem, bool HaveDye, bool AlreadyDyed)
-    {
-        public object Describe() => new
-        {
-            slot = Piece.Slot, item = Name, itemId = ItemId, source = Source.ToString(), retainer = Where.Retainer,
-            inBags = Where.InBags, inGlamourDresser = Where.InGlamourDresser, inArmoire = Where.InArmoire, soldByVendor = Where.AtVendor, onMarketBoard = Where.OnMarket,
-            dye = Piece.Dye, dyeItem = DyeItem, haveDye = Piece.Dye is null ? (bool?)null : HaveDye, alreadyDyed = Piece.Dye is null ? (bool?)null : AlreadyDyed,
-        };
-    }
-
-    /// <summary>Where the player has a piece, and its dye. Framework thread.</summary>
-    private static unsafe PieceState Inspect(FashionPiece piece, RetainerTracker retainers)
-    {
-        var item = ResolveItem(piece.Item, english: true);
-        var carried = Find(item.RowId);
-        string? retainer = null;
-        if (retainers.Get(Svc.PlayerState.ContentId) is { } cached)
-            retainer = cached.Retainers.FirstOrDefault(r => r.Items.Any(i => i.ItemId == item.RowId))?.Name;
-        var where = new ItemWhereabouts(carried is not null || IsEquipped(item.RowId), retainer, InDresser(item.RowId), InArmoire(item.RowId), SoldByVendor(item.RowId), false,
-            OnMarket: !item.IsUntradable && item.ItemSearchCategory.RowId != 0);
-
-        uint stain = 0;
-        string? dyeItem = null;
-        var haveDye = false;
-        var already = false;
-        if (piece.Dye is { } dye)
-        {
-            (stain, var dyeItems) = DyeItemsOf(dye);
-            var im = InventoryManager.Instance();
-            var have = dyeItems.FirstOrDefault(i => im->GetInventoryItemCount(i) > 0);
-            haveDye = have != 0;
-            dyeItem = Svc.Data.GetExcelSheet<Item>().GetRowOrDefault(have != 0 ? have : dyeItems.FirstOrDefault())?.Name.ExtractText();
-            already = CurrentStain(item.RowId) == stain;
-        }
-        var name = Svc.Data.GetExcelSheet<Item>().GetRowOrDefault(item.RowId)?.Name.ExtractText() ?? piece.Item;
-        return new PieceState(piece, item.RowId, name, where, FashionPlan.Choose(where), stain, dyeItem, haveDye, already);
-    }
 
     /// <summary>A dye color (as guides name it, in English) and its dye items, in the order dye_item tries them.</summary>
     private static (uint Stain, List<uint> Items) DyeItemsOf(string dye)
@@ -307,96 +301,6 @@ internal static class FashionTools
         var row = Svc.Data.GetExcelSheet<Stain>(Dalamud.Game.ClientLanguage.English).FirstOrDefault(s => s.Name.ExtractText().Equals(dye, StringComparison.OrdinalIgnoreCase));
         if (row.RowId == 0) throw new ToolException($"The dye color '{dye}' is not known to the game.");
         return (row.RowId, row.Item.Where(i => i.RowId != 0).Select(i => i.RowId).ToList());
-    }
-
-    /// <summary>
-    /// The dyes the job buys: one for each dye step (the set's pieces not dyed yet, and the colors for slots it has no piece for)
-    /// that the dyes in the bags don't cover. Framework thread.
-    /// </summary>
-    private static unsafe IReadOnlyDictionary<uint, int> DyesToBuy(FashionSet set, List<PieceState> pieces)
-    {
-        var uses = pieces.Where(p => p.Piece.Dye is not null && !p.AlreadyDyed).Select(p => p.Piece.Dye!)
-            .Concat(set.OtherDyes.Select(d => d.Dye))
-            .Select(dye => (IReadOnlyList<uint>)DyeItemsOf(dye).Items).ToList();
-        var im = InventoryManager.Instance();
-        return FashionDyes.ToBuy(uses, item => im->GetInventoryItemCount(item));
-    }
-
-    /// <summary>The job: get the pieces (grouped by place), dye them, and present at the end.</summary>
-    private static object Plan(WeeklyReport report, string setName, FashionSet set, List<PieceState> pieces, JobManager jobs, string? client, int maxMarketPrice,
-                               Dictionary<uint, (uint TerritoryType, string Name, string Mode)> duties, IReadOnlyDictionary<uint, int> dyes)
-    {
-        var missing = pieces.Where(p => p.Source == ItemSource.None).ToList();
-        if (missing.Count > 0)
-            throw new ToolException($"No known way to get {string.Join(", ", missing.Select(p => p.Name))}: not carried, not with a retainer, " +
-                                    "not in the glamour dresser or armoire, no vendor sells it, it can't be traded, and no dungeon AutoDuty can run drops it. Check get_item_sources for drops or crafting.");
-
-        var steps = new List<JobManager.Step>();
-        void Add(string tool, JsonObject args, string note) => steps.Add(new JobManager.Step { Id = $"s{steps.Count + 1}", Tool = tool, Args = args, Note = note });
-
-        foreach (var group in pieces.Where(p => p.Source == ItemSource.Retainer).GroupBy(p => p.Where.Retainer))
-        {
-            if (steps.All(s => s.Tool != "navigate_to" || s.Args["destination"]?.ToString() != "summoning_bell"))
-                Add("navigate_to", new JsonObject { ["destination"] = "summoning_bell" }, "Goes to a summoning bell");
-            var transfers = new JsonArray(group.Select(p => (JsonNode)new JsonObject { ["item_id"] = p.ItemId, ["from"] = group.Key, ["to"] = "player", ["stacks"] = 1 }).ToArray());
-            Add("transfer_retainer_items", new JsonObject { ["transfers"] = transfers }, $"Takes {string.Join(", ", group.Select(p => p.Name))} from {group.Key}");
-        }
-        var stored = pieces.Where(p => p.Source is ItemSource.GlamourDresser or ItemSource.Armoire).ToList();
-        if (stored.Count > 0)
-        {
-            Add("navigate_to", new JsonObject { ["destination"] = "inn" }, "Goes to the inn room");
-            foreach (var p in stored)
-                Add("retrieve_glamour_item", new JsonObject { ["item"] = p.ItemId, ["from"] = p.Source == ItemSource.Armoire ? "armoire" : "dresser" },
-                    $"Takes {p.Name} out of the {(p.Source == ItemSource.Armoire ? "armoire" : "glamour dresser")}");
-        }
-        foreach (var p in pieces.Where(p => p.Source == ItemSource.Vendor))
-            Add("buy_item", new JsonObject { ["item"] = p.ItemId, ["quantity"] = 1 }, $"Buys {p.Name}");
-        foreach (var p in pieces.Where(p => p.Source == ItemSource.Duty))
-        {
-            var duty = duties[p.ItemId];
-            Add("run_duty", new JsonObject
-            {
-                ["duty"] = duty.TerritoryType.ToString(), ["mode"] = duty.Mode, ["loops"] = 99,
-                ["until"] = new JsonArray(new JsonObject { ["item"] = p.ItemId.ToString(), ["quantity"] = 1 }),
-            }, $"Runs {duty.Name} ({duty.Mode}) until {p.Name} drops");
-        }
-        foreach (var p in pieces.Where(p => p.Source == ItemSource.Market))
-            Add("buy_from_market_board", new JsonObject { ["item"] = p.ItemId, ["quantity"] = 1, ["max_unit_price"] = maxMarketPrice },
-                $"Buys {p.Name} on the market board (at most {maxMarketPrice:N0} gil)");
-        foreach (var (dyeId, count) in dyes)
-        {
-            var dyeItem = Svc.Data.GetExcelSheet<Item>().GetRowOrDefault(dyeId)?.Name.ExtractText() ?? dyeId.ToString();
-            if (SoldByVendor(dyeId)) Add("buy_item", new JsonObject { ["item"] = dyeId, ["quantity"] = count }, $"Buys {count} {dyeItem}");
-            else Add("buy_from_market_board", new JsonObject { ["item"] = dyeId, ["quantity"] = count, ["max_unit_price"] = maxMarketPrice },
-                     $"Buys {count} {dyeItem} on the market board");
-        }
-        foreach (var p in pieces.Where(p => p.Piece.Dye is not null && !p.AlreadyDyed))
-            Add("dye_item", new JsonObject { ["item"] = p.ItemId, ["dye"] = p.Piece.Dye }, $"Dyes {p.Name} {p.Piece.Dye}");
-        // The set's dyes for slots it has no piece for: whatever is worn there takes the color (its glamour, if it has one).
-        foreach (var (slot, dye) in set.OtherDyes)
-            Add("dye_item", new JsonObject { ["slot"] = slot, ["dye"] = dye }, $"Dyes the piece worn on the {slot} {dye}");
-
-        foreach (var p in pieces.Where(p => p.Source is ItemSource.Vendor or ItemSource.Market)) BoughtForReport[p.ItemId] = 0;
-
-        var judging = FashionSchedule.IsJudgingOpen(DateTime.UtcNow);
-        if (judging)
-        {
-            // A week's ring hint is for one hand: the site's piece for the left ring goes on the left hand.
-            bool Left(PieceState p) => p.Piece.Slot.Trim().Equals("left_ring", StringComparison.OrdinalIgnoreCase);
-            var present = new JsonObject { ["items"] = new JsonArray(pieces.Where(p => !Left(p)).Select(p => (JsonNode)p.ItemId).ToArray()) };
-            if (pieces.FirstOrDefault(Left) is { } left) present["left_ring"] = left.ItemId;
-            Add("present_fashion_report", present, "Puts on the outfit, presents it to the Masked Rose, and throws away cheap pieces it bought");
-        }
-        if (steps.Count == 0) throw new ToolException("Nothing to do: judging is closed (Friday to the Tuesday reset) and you have everything already.");
-
-        var job = jobs.Start($"Fashion Report: {report.Theme}", steps, client);
-        return new
-        {
-            started = JobManager.Describe(job), week = report.Week, theme = report.Theme, set = setName, setIsThisWeeks = set.Fresh,
-            pieces = pieces.Select(p => p.Describe()),
-            note = judging ? null : "Judging is closed until Friday 08:00 UTC: the job only prepares the outfit; present it then with present_fashion_report.",
-            poll = $"get_job id={job.Id}",
-        };
     }
 
     private static Task<Fetched<WeeklyReport>> FetchReport(CancellationToken ct) => Reports.Get(ReportUrl, DownloadReport, ct);
@@ -430,9 +334,10 @@ internal static class FashionTools
     /// week's. Nothing is asked when neither is true. Declining (or no answer) stops the call, and the error repeats what the player
     /// was told so the assistant knows why.
     /// </summary>
-    private static async Task ApproveUnready(ReportStatus status, FashionSet set, Permissions.Caller? caller, CancellationToken ct)
+    private static async Task ApproveUnready(ReportStatus status, IReadOnlyList<string> outfit, Permissions.Caller? caller, CancellationToken ct)
     {
-        var reasons = FashionApproval.Reasons(status, FashionApproval.SetLines(set));
+        // The plan needs this week's hints, not the site's ready-made set.
+        var reasons = FashionApproval.Reasons(status, outfit, setNeeded: false);
         if (reasons.Count == 0) return;
         var request = new Consent.Request(FashionApproval.Title, reasons)
         {
@@ -483,25 +388,6 @@ internal static class FashionTools
                 if (container->GetInventorySlot(i) is var slot && slot != null && slot->ItemId == itemId) return (type, i);
         }
         return null;
-    }
-
-    private static unsafe bool IsEquipped(uint itemId)
-    {
-        var equipped = InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems);
-        for (var i = 0; equipped != null && i < equipped->Size; i++)
-            if (equipped->GetInventorySlot(i)->ItemId == itemId) return true;
-        return false;
-    }
-
-    private static unsafe byte CurrentStain(uint itemId)
-    {
-        foreach (var type in Carried.Prepend(InventoryType.EquippedItems))
-        {
-            var container = InventoryManager.Instance()->GetInventoryContainer(type);
-            for (var i = 0; container != null && i < container->Size; i++)
-                if (container->GetInventorySlot(i) is var slot && slot != null && slot->ItemId == itemId) return slot->GetStain(0);
-        }
-        return 0;
     }
 
     /// <summary>In the glamour dresser, from the game's item finder (kept per character, no need to open the dresser).</summary>

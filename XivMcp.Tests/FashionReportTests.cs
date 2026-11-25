@@ -137,42 +137,6 @@ public class WeeklyReportTests
     }
 }
 
-public class FashionSourceTests
-{
-    private static ItemWhereabouts Where(bool bags = false, string? retainer = null, bool dresser = false, bool armoire = false,
-                                         bool vendor = false, bool duty = false, bool market = false) =>
-        new(bags, retainer, dresser, armoire, vendor, duty, market);
-
-    [Fact]
-    public void An_item_you_carry_needs_nothing()
-    {
-        Assert.Equal(ItemSource.Have, FashionPlan.Choose(Where(bags: true, retainer: "Retainer A", vendor: true)));
-    }
-
-    [Fact]
-    public void Stored_items_come_before_buying()
-    {
-        Assert.Equal(ItemSource.Retainer, FashionPlan.Choose(Where(retainer: "Retainer A", dresser: true, vendor: true)));
-        Assert.Equal(ItemSource.GlamourDresser, FashionPlan.Choose(Where(dresser: true, armoire: true, vendor: true)));
-        Assert.Equal(ItemSource.Armoire, FashionPlan.Choose(Where(armoire: true, vendor: true)));
-    }
-
-    [Fact]
-    public void The_market_board_comes_after_vendors_and_before_dungeons()
-    {
-        Assert.Equal(ItemSource.Vendor, FashionPlan.Choose(Where(vendor: true, market: true)));
-        Assert.Equal(ItemSource.Market, FashionPlan.Choose(Where(market: true, duty: true)));
-    }
-
-    [Fact]
-    public void Buying_comes_before_running_a_dungeon_and_nothing_means_missing()
-    {
-        Assert.Equal(ItemSource.Vendor, FashionPlan.Choose(Where(vendor: true, duty: true)));
-        Assert.Equal(ItemSource.Duty, FashionPlan.Choose(Where(duty: true)));
-        Assert.Equal(ItemSource.None, FashionPlan.Choose(Where()));
-    }
-}
-
 public class GoldSaucerStandaloneTests
 {
     [Fact]
