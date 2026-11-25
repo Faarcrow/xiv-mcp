@@ -84,7 +84,7 @@ public static class QuestionableWorkarounds
     // Craft.cs starts the quest's Artisan list before it counts the bags, and the list crafts every turn-in again. With the items
     // owned, ShopController buys nothing, and Questionable was seen staying in the open shop.
     public static readonly Workaround SkipOwnedItemsStep = new("skip_owned_items_step",
-        "Presses Questionable's Skip at a craft or purchase step whose items are already in your bags, and stops the Artisan list it started for them.",
+        "Presses Questionable's Skip at a craft or purchase step whose items were already in your bags when the step began, and stops the Artisan list it started for them.",
         "Questionable has Artisan craft the quest's items again, using up materials, and can stay in an open shop.",
         "15.756.3.64");
 

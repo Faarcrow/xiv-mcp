@@ -261,6 +261,7 @@ internal static class QuestionableTools
         var stopArmed = false;
         // The quests the stop flag was set for, so each counts once in the workarounds, also across rounds.
         var armedQuests = new HashSet<uint>();
+        var skips = new StepSkips();
         try
         {
             while (true)
@@ -368,7 +369,7 @@ internal static class QuestionableTools
                         stall = new StallWatch(StallLimit);
                         continue;
                     }
-                    if (await Game.Run(SkipDoneMeld).ConfigureAwait(false) is { } skipped)
+                    if (await Game.Run(() => SkipDoneMeld(skips)).ConfigureAwait(false) is { } skipped)
                     {
                         Svc.Log.Information($"[MCP] {skipped.Message}");
                         workarounds.Used(skipped.Workaround);
@@ -619,15 +620,23 @@ internal static class QuestionableTools
         }
     }
 
-    /// <summary>" It was stuck on task X (next: …)." for an error message, or nothing when the task is out of reach.</summary>
-    private static string? lastSkippedStep;
+    /// <summary>
+    /// The manual steps one run of quests skipped or looked at: the step Skip was last pressed at (pressed once per step), and the
+    /// craft or purchase step looked at last with whether its items were owned at the first look. Kept per run, so a later run (the
+    /// same daily the next day, a retried job) looks at its steps afresh.
+    /// </summary>
+    private sealed class StepSkips
+    {
+        public string? LastSkipped;
+        public readonly OwnedAtStart Owned = new();
+    }
 
     /// <summary>
     /// When Questionable waits at a manual "meld materia on X" step and an X in the bags, armoury or worn gear already carries
     /// materia, presses its Skip (QuestController.Skip(questId, sequence), what its window's Skip button calls) once. Returns the
     /// workaround and what it did, or null. Framework thread.
     /// </summary>
-    private static (Workaround Workaround, string Message)? SkipDoneMeld()
+    private static (Workaround Workaround, string Message)? SkipDoneMeld(StepSkips skips)
     {
         try
         {
@@ -646,19 +655,19 @@ internal static class QuestionableTools
             var comment = step.GetType().GetProperty("Comment", Any)?.GetValue(step) as string;
             var questId = quest.GetType().GetProperty("Id", Any)?.GetValue(quest);
             var key = $"{questId}/{sequence}/{stepIndex}";
-            if (key == lastSkippedStep || questId is null) return null;
+            if (key == skips.LastSkipped || questId is null) return null;
             (Workaround, string) done;
             if (XivMcp.Quests.ManualStep.MeldItem(type, comment) is { } itemName)
             {
                 if (!HasMelded(itemName)) return null;
                 done = (QuestionableWorkarounds.SkipMeldedStep, $"Questionable waited for \"{comment}\"; {itemName} already carries materia, so its step was skipped.");
             }
-            else if (CraftStepDone(step, type) is { } crafted) done = (QuestionableWorkarounds.SkipOwnedItemsStep, crafted);
+            else if (CraftStepDone(step, type, key, skips.Owned) is { } crafted) done = (QuestionableWorkarounds.SkipOwnedItemsStep, crafted);
             else return null;
             var skip = controller.GetType().GetMethods(Any).FirstOrDefault(m => m.Name == "Skip" && m.GetParameters().Length == 2);
             if (skip is null) return null;
             skip.Invoke(controller, [questId, sequence.Value]);
-            lastSkippedStep = key;
+            skips.LastSkipped = key;
             return done;
         }
         catch (Exception e)
@@ -669,10 +678,11 @@ internal static class QuestionableTools
     }
 
     /// <summary>
-    /// A "Craft" step whose items are already in the bags: stops the Artisan list Questionable started for it (it would craft the
-    /// quest's items again) and returns what to log; null when the step still needs crafting. Framework thread.
+    /// A craft or purchase step whose items were already in the bags when the step started: stops the Artisan list Questionable
+    /// started for a craft (it would craft the quest's items again) and returns what to log; null when the step still needs its
+    /// items, or they arrived during the step (<see cref="OwnedAtStart"/>). Framework thread.
     /// </summary>
-    private static unsafe string? CraftStepDone(object step, string? type)
+    private static unsafe string? CraftStepDone(object step, string? type, string key, OwnedAtStart owned)
     {
         if (!XivMcp.Quests.CraftStep.Covers(type)) return null;
         var itemId = step.GetType().GetProperty("ItemId", Any)?.GetValue(step) as uint?;
@@ -682,7 +692,7 @@ internal static class QuestionableTools
         var im = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
         var nq = im->GetInventoryItemCount(id, false, false);
         var hq = im->GetInventoryItemCount(id, true, false);
-        if (!XivMcp.Quests.CraftStep.IsDone(type, count, nq, hq, quality)) return null;
+        if (!owned.Skip(key, XivMcp.Quests.CraftStep.IsDone(type, count, nq, hq, quality))) return null;
         if (type == XivMcp.Quests.CraftStep.Craft &&
             (CraftGatherTools.Ipc("Artisan.IsListRunning") == true || CraftGatherTools.Ipc("Artisan.IsBusy") == true))
             CraftGatherTools.StopArtisan();
@@ -733,6 +743,7 @@ internal static class QuestionableTools
         return false;
     }
 
+    /// <summary>" It was stuck on task X (next: …)." for an error message, or nothing when the task is out of reach.</summary>
     private static string StuckOn()
     {
         try

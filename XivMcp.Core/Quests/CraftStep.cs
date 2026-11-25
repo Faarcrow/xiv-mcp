@@ -31,3 +31,27 @@ public static class CraftStep
         return owned >= itemCount;
     }
 }
+
+/// <summary>
+/// Whether a craft or purchase step's items were owned before Questionable worked on it: only then is the step skipped. The first look
+/// at a step decides. Items Questionable crafted or bought for the step itself show up in the bags as the step ends; Questionable
+/// finishes such a step on its own once nothing is crafting (Craft.cs, DoCraft), so a skip then only stops it. That happened on Chief
+/// Concerns and two Dwarves dailies on 2026-11-25, each costing a restart. One per run of quests, like the other watches.
+/// </summary>
+public sealed class OwnedAtStart
+{
+    private string? step;
+    private bool doneAtStart;
+
+    /// <param name="stepKey">The step's quest, sequence and step index.</param>
+    /// <param name="doneNow">The bags hold what the step asks for now (<see cref="CraftStep.IsDone"/>).</param>
+    public bool Skip(string stepKey, bool doneNow)
+    {
+        if (stepKey != step)
+        {
+            step = stepKey;
+            doneAtStart = doneNow;
+        }
+        return doneAtStart && doneNow;
+    }
+}
