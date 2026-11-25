@@ -50,7 +50,7 @@ An integration can also step in where its plugin falls short. Each such workarou
 
 ## Pausing other plugins
 
-While XIV MCP drives game windows, it pauses YesAlready and TextAdvance by adding itself to their `StopRequests` sets, and holds AutoRetainer back at a bell through AutoRetainer's public IPC. See [Compatibility](/docs/user/compatibility) for what players see.
+While XIV MCP drives game windows, it pauses YesAlready and TextAdvance by adding itself to their `StopRequests` sets, and holds AutoRetainer back at a bell through AutoRetainer's public IPC. For a story quest the player watches, it takes TextAdvance's external control (`TextAdvanceControl`, the IPC Questionable uses for its runs), which TextAdvance keeps in memory only and lets go of only for its holder. See [Compatibility](/docs/user/compatibility) for what players see.
 
 ## Caches as resources
 

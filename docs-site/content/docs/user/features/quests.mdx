@@ -80,6 +80,20 @@ After each quest it looks again, so a rank-up reached on the way is done too, an
 
 If you have not unlocked an allied society yet, it names the quest that unlocks them. `complete_quest` can do that quest, with the quests before it.
 
+### Watching their story
+
+With its usual settings, Questionable skips the talk and cutscenes of every quest, the rank-up and story quests too. To watch an allied society's story yourself and make its choices, ask your assistant to leave the story to you (`player_ranks_up`, off unless you ask for it). The dailies are done as usual. For each quest that is not a daily:
+
+- It is done on its own, never in one go with dailies.
+- Questionable still walks, flies, fights and hands in items. XIV MCP takes over TextAdvance for the quest, so it skips no talk, no cutscene and no quest reward, whatever your own TextAdvance settings are. They are never changed: TextAdvance only lends itself while the quest runs, and XIV MCP gives it back once you are out of the quest's last scene, and also when XIV MCP is turned off or updated. YesAlready, if you use it, is paused meanwhile.
+- When the game is about to ask you something in the quest's conversation or a cutscene (a dialogue choice, a Yes or No, the list of quests an NPC offers, a place on the map), XIV MCP stops Questionable before it can answer, so the choice is yours. Once you are out of the conversation, XIV MCP starts Questionable again on the quest.
+- Some story quests shut each other out: doing one means you can never do the other, such as the Qitari stelae, where you back one of two versions of their history. XIV MCP picks none of them. Questionable takes you to the first one's quest giver, and the offer is yours: TextAdvance does not accept it for you. If you do not take it, Questionable takes you to the next one's, and so on, round and round, until you take one. To stop, cancel the job.
+- Left to Questionable: menus of travel (an aetheryte, Lifestream), the prompts of its own steps it answers whatever its settings (a high-quality turn-in, a ticket, a purchase, Return), the prompt that enters a solo duty, which it then fights, and everything inside a quest battle, where it answers choices even while stopped.
+- Each stop for a choice is a stop of Questionable's: if you set Questionable to notify you or run a command when it stops, that happens at each choice too.
+- If the job is paused, cancelled or fails during such a quest, nothing is clicked in the conversation you are in, also when it is resumed or retried while you are still in it.
+- XIV MCP waits as long as you are in a conversation or cutscene, and that time does not count towards the step's time limit. It only stops waiting when the game holds your character with no window and no cutscene left for a minute, which you could not end either.
+- If another plugin holds TextAdvance at that moment, the quest is not started, and the job says so. `get_automation_status` shows when XIV MCP holds TextAdvance.
+
 ## The main scenario
 
 `start_main_scenario` starts Questionable on your next main scenario quest. It carries on with the next ones, and with the quests on its own priority list first, until you stop it or it cannot go on, at a duty or a level it does not have. To stop at a certain quest, use `complete_quest` with that quest instead.
