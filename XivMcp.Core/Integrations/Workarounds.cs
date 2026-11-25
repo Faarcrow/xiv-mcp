@@ -97,8 +97,28 @@ public static class QuestionableWorkarounds
         "Questionable goes on to a quest of its own choosing (from the journal or the main scenario), often with a teleport.",
         "15.756.3.64");
 
+    // Questionable takes TextAdvance's external control whenever it runs (or is not in manual mode) and nobody holds it, if its
+    // ConfigureTextAdvance setting is on, with its "but don't skip cutscenes or dialogue" setting of that moment, and never updates it
+    // while it holds it (TextAdvanceIpc.OnUpdate). So the setting is one for whole runs, turned on before they start.
+    public static readonly Workaround WatchStory = new("watch_story",
+        "When you watch an allied society's story quests yourself, holds TextAdvance for them so it skips no talk, cutscene or quest reward, while your settings stay as they are.",
+        "Questionable skips talk and cutscenes in every quest of a run, unless its setting not to was on when it took TextAdvance over.",
+        "15.756.3.64");
+
+    // Questionable answers dialogue choices, Yes/No prompts and map points in PostSetup listeners that act while it runs or in a quest
+    // battle (DialogueChoiceHandler, YesNoChoiceHandler, PointMenuHandler). Its "but don't skip cutscenes or dialogue" leaves the
+    // quest's list choices and Yes/No choices to the player, but only as a setting for whole runs; quest selection, travel, and in its
+    // own steps the high-quality turn-in, ticket, Return, purchase and solo duty prompts it answers either way, and XIV MCP leaves
+    // those (and quest battles) to it too. Story quests that shut each other out (QuestLock both ways, such as the Qitari's stelae)
+    // are a choice too: Questionable only does the ones on its list, in order, and TextAdvance accepts every offer.
+    public static readonly Workaround ChoiceToPlayer = new("choice_to_player",
+        "When you watch an allied society's story quests yourself, stops Questionable as a story choice opens, so the choice is yours, and starts it again once you are out of the conversation. Between story quests that shut each other out, it takes you to each quest giver in turn until you take one.",
+        "Questionable answers the choices of a quest itself while it runs.",
+        "15.756.3.64");
+
     public static IReadOnlyList<Workaround> All { get; } =
-        [PickJob, BackToAcceptedJob, CloseBlockingWindow, AcceptTogether, ConfirmHqTurnIn, SkipMeldedStep, SkipOwnedItemsStep, StopAfterRound];
+        [PickJob, BackToAcceptedJob, CloseBlockingWindow, AcceptTogether, ConfirmHqTurnIn, SkipMeldedStep, SkipOwnedItemsStep, StopAfterRound, WatchStory,
+         ChoiceToPlayer];
 }
 
 /// <summary>What XIV MCP does where Satisfier falls short in custom deliveries with player_ranks_up (deliver_custom_delivery and the jobs that run it).</summary>

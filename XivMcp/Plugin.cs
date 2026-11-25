@@ -193,6 +193,8 @@ public sealed class Plugin : IDalamudPlugin
 
         if (Config.ServerEnabled) Server.Start();
         pluginApi.AnnounceReady(); // plugins that loaded before us register their tools now
+        // A hold on TextAdvance left from before a crash or reload: only ours is let go (TextAdvance refuses it for another holder).
+        Svc.Framework.RunOnFrameworkThread(TextAdvanceControl.Release);
     }
 
     /// <summary>
@@ -234,7 +236,10 @@ public sealed class Plugin : IDalamudPlugin
         probe.Dispose();
         // Before the jobs stop: a delivery's own cleanup runs on the framework, which may not run again now.
         SatisfierBridge.RestoreTurnInLimits();
+        TextAdvanceControl.Release();
         jobs?.Dispose();
+        // Again after the jobs: a story quest's hold could have been taken on the framework just before they stopped.
+        TextAdvanceControl.Release();
         wakeUp.Dispose();
         Server.Dispose();
         XivMcp.Util.AppIcons.Reset();

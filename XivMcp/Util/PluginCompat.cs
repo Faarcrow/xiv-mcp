@@ -224,7 +224,7 @@ internal sealed class PluginCompat : IDisposable
                 suppressedByXivMcp = suppressedAutoRetainer,
             };
         if (IsLoaded("YesAlready")) plugins["YesAlready"] = new { pausedByXivMcp = pausedClickers };
-        if (IsLoaded("TextAdvance")) plugins["TextAdvance"] = new { pausedByXivMcp = pausedClickers };
+        if (IsLoaded("TextAdvance")) plugins["TextAdvance"] = new { pausedByXivMcp = pausedClickers, heldForStoryByXivMcp = TextAdvanceControl.Held };
         if (FcchLoaded) plugins["FCCH"] = new { busy = Ipc<bool>("FCCH.IsBusy") };
         if (IsLoaded("WaymarkPresetPlugin")) plugins["WaymarkPresetPlugin"] = new { };
         return new { plugins, holdingBell };

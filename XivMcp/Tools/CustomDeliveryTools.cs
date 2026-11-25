@@ -68,7 +68,7 @@ internal static class CustomDeliveryTools
                   "properties": {
                     "client": { "type": "string", "description": "The client's name (as get_custom_deliveries names them)." },
                     "kind": { "type": "string", "enum": ["craft", "gather", "fish"], "description": "Default: the bonus request, else craft, else gather. Use 'fish' only when the player asked for fishing." },
-                    "player_ranks_up": { "type": "boolean", "description": "Leave the client's rank-up story to the player, so they can watch it (default false: Satisfier hands the delivery in and the story is clicked through). The deliveries before it go in as usual, always with Satisfier (Questionable would hand in the rank-up item too). For the rank-up one the item is made and the character taken to the client, then XIV MCP hands it in itself the way a player does (talks to the client, picks the request, puts the item in, presses Hand Over) and clicks nothing after Hand Over: the tool waits until the player is out of the story. When the client's deliveries left do not go down within 10 seconds of Hand Over, the step fails saying why: retry it to hand it in again. Stopping or failing the step while the player is in the story, or in a conversation they started, leaves it alone too. When the delivery goes in without the client reaching the next rank (an item below the top collectability tier gives less satisfaction), the step ends saying so. When XIV MCP cannot get to Hand Over (a question from the game, a window that does not open), the player is told in game to hand it in and the tool waits for them; after 30 minutes without a hand-in it fails (in a conversation the player started after being asked, after 2 hours): when the player handed it in after all, skip the step; calling it again makes the item again if it is gone, has Satisfier take the character back to the client, then tries again. A run after the client ranked up (a resume or retry of the same job step) delivers nothing and ends. When the story holds the character for over 10 minutes after the hand-in, it fails saying so: the delivery is done, skip the step. Changes nothing when no delivery of this week reaches the next rank." }
+                    "player_ranks_up": { "type": "boolean", "description": "Leave the client's rank-up story to the player, so they can watch it (default false: Satisfier hands the delivery in and the story is clicked through). The deliveries before it go in as usual, always with Satisfier (Questionable would hand in the rank-up item too). For the rank-up one the item is made and the character taken to the client, then XIV MCP hands it in itself the way a player does (talks to the client, picks the request, puts the item in, presses Hand Over) and clicks nothing after Hand Over: the tool waits until the player is out of the story. When the client's deliveries left do not go down within 10 seconds of Hand Over, the step fails saying why: retry it to hand it in again. Stopping or failing the step while the player is in the story, or in a conversation they started, leaves it alone too. When the delivery goes in without the client reaching the next rank (an item below the top collectability tier gives less satisfaction), the step ends saying so. When XIV MCP cannot get to Hand Over (a question from the game, a window that does not open), the player is told in game to hand it in and the tool waits for them; after 30 minutes without a hand-in it fails (in a conversation the player started after being asked, after 2 hours): when the player handed it in after all, skip the step; calling it again makes the item again if it is gone, has Satisfier take the character back to the client, then tries again. A run after the client ranked up (a resume or retry of the same job step) delivers nothing and ends. The story is waited out however long it lasts; when the game holds the character with no window left for a minute after the hand-in, it fails saying so: the delivery is done, skip the step. Changes nothing when no delivery of this week reaches the next rank." }
                   },
                   "required": ["client"]
                 }
@@ -636,7 +636,7 @@ internal static class CustomDeliveryTools
 
         // The client's story goes on after the delivery: the next step must not find the player in it.
         JobManager.Instance?.PlayerInConversation(DeliverTool, true);
-        var story = new StoryWait(DateTime.UtcNow);
+        var story = new StoryWait();
         while (true)
         {
             var (inConversation, heldWithoutWindow) = await Game.Run(() =>
@@ -652,8 +652,6 @@ internal static class CustomDeliveryTools
                                  : askedPlayer ? $"You handed in {item}: {c.Name} reached rank {rank}."
                                  : $"{c.Name} reached rank {rank}, and you are out of the story.");
                     return outcome == HandIn.RankedUp;
-                case StoryEnd.TooLong:
-                    throw new ToolException(PlayerRankUp.StillInStory(c.Name));
                 case StoryEnd.HeldWithoutWindow:
                     throw new ToolException(PlayerRankUp.HeldWithoutWindow(c.Name));
             }

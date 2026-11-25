@@ -9,10 +9,13 @@ using Dalamud.Game.ClientState.Conditions;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
+using XivMcp.CustomDeliveries;
 using XivMcp.Integrations;
 using XivMcp.Mcp;
 using XivMcp.Quests;
+using XivMcp.Ui;
 using XivMcp.Util;
 
 namespace XivMcp.Tools;
@@ -97,13 +100,15 @@ internal static class QuestionableTools
                           "its reputation: the quests already accepted, the rank-up and story quests that open once the reputation bar is " +
                           "full (shown in blue in the game), and the day's daily quests the allowances left allow. After each quest it looks " +
                           "again, so a rank-up reached on the way is done too. Follow it with get_job; stop_questing or cancel_job stops it " +
-                          "(after a fight). Questionable's own priority list is put back afterwards.",
+                          "(after a fight). Questionable's own priority list is put back afterwards. With 'player_ranks_up' the society's " +
+                          "story is left to the player (see do_quests).",
             InputSchema = """
                 {
                   "type": "object",
                   "properties": {
                     "tribe": { "type": "string", "description": "The allied society's name, such as Amalj'aa, Pelupelu or Yok Huy (see get_questing_status)." },
-                    "timeout_minutes": { "type": "integer", "minimum": 5, "maximum": 1440, "description": "Give up after this long (default 180)." }
+                    "timeout_minutes": { "type": "integer", "minimum": 5, "maximum": 1440, "description": "Give up after this long (default 180)." },
+                    "player_ranks_up": { "type": "boolean", "description": "Leave the story of the society's rank-up and story quests to the player, to watch it and make its choices (default false: their talk and cutscenes are skipped and Questionable makes the choices). See do_quests." }
                   },
                   "required": ["tribe"]
                 }
@@ -139,7 +144,8 @@ internal static class QuestionableTools
                     [new JobManager.Step
                     {
                         Id = "quests", Tool = "do_quests",
-                        Args = new JsonObject { ["tribe"] = tribe.Id.ToString(), ["timeout_minutes"] = args.Int("timeout_minutes", 180, 5, 1440) },
+                        Args = PlayerRanksUpArgs(new JsonObject { ["tribe"] = tribe.Id.ToString(), ["timeout_minutes"] = args.Int("timeout_minutes", 180, 5, 1440) },
+                                                 args.Bool("player_ranks_up", false)),
                         Note = $"Do today's {tribe.Name} quests",
                     }], client());
                 return new
@@ -162,7 +168,10 @@ internal static class QuestionableTools
                           "fight; on the last quest it gives Questionable for the current job, it turns on Questionable's stop-after-this-quest, " +
                           "so Questionable stops as that quest is done instead of going on to a quest of its own. Starts Questionable again when the character stands still for 2 minutes (at most 3 times). Fails when Questionable stops on its own, waits for the player (a duty, a solo duty, a step by hand) or turns to another quest. " +
                           "Where Questionable falls short (the job to accept a quest on, a step already done, a prompt it leaves open) it steps in; " +
-                          "the result's 'workarounds' names Questionable's version and the workarounds used. Meant as a job step; complete_quest and " +
+                          "the result's 'workarounds' names Questionable's version and the workarounds used. With 'tribe' and 'player_ranks_up', " +
+                          "the society's quests that are not dailies (rank-up and story quests) are done one at a time with their story left " +
+                          "to the player: XIV MCP holds TextAdvance so it skips no talk, cutscene or reward, and stops Questionable as a " +
+                          "choice opens, starting it again once the player is out of the conversation. Meant as a job step; complete_quest and " +
                           "do_tribe_dailies start it.",
             InputSchema = """
                 {
@@ -170,7 +179,8 @@ internal static class QuestionableTools
                   "properties": {
                     "quest": { "type": "string", "description": "The quest's name or id." },
                     "tribe": { "type": "string", "description": "The allied society's name or id." },
-                    "timeout_minutes": { "type": "integer", "minimum": 5, "maximum": 1440, "description": "Give up after this long (default 240)." }
+                    "timeout_minutes": { "type": "integer", "minimum": 5, "maximum": 1440, "description": "Give up after this long (default 240)." },
+                    "player_ranks_up": { "type": "boolean", "description": "With 'tribe': leave the story of the society's rank-up and story quests to the player, to watch it and make its choices (default false: their talk and cutscenes are skipped and Questionable makes the choices). The dailies are done as usual. Questionable still walks, fights and hands in items. Of story quests that shut each other out, none is picked: Questionable takes the player to each quest giver in turn until they take one. Stopping or failing the step during such a quest leaves the conversation alone." }
                   }
                 }
                 """,
@@ -192,7 +202,8 @@ internal static class QuestionableTools
                     }, timeout, ct).ConfigureAwait(false);
                 }
                 var tribe = await Game.RunLoggedIn(() => { RequireLoaded(); return FindTribe(tribeQuery!); }).ConfigureAwait(false);
-                var result = await Run(() => PlanTribe(tribe.Id), timeout, ct).ConfigureAwait(false);
+                var playerRanksUp = args.Bool("player_ranks_up", false);
+                var result = await Run(() => PlanTribe(tribe.Id), timeout, ct, playerRanksUp ? q => PlayerStory.Watched(q, true) : null).ConfigureAwait(false);
                 return new { result.done, reputation = await Game.Run(() => TribeRank(tribe.Id)).ConfigureAwait(false), result.workarounds };
             },
         };
@@ -249,9 +260,11 @@ internal static class QuestionableTools
     /// <summary>
     /// Gives Questionable the planned quests and watches it, planning again whenever one of them is done, until nothing is left.
     /// Its priority list is put back and it is stopped (after a fight) at the end, however the run ends. Where Questionable falls
-    /// short it steps in, and counts each <see cref="QuestionableWorkarounds"/> it used.
+    /// short it steps in, and counts each <see cref="QuestionableWorkarounds"/> it used. A quest <paramref name="watched"/> says the
+    /// player watches is done in a round of its own, with its story left to the player (<see cref="WatchedQuest"/>); null when the
+    /// player watches none. Time spent waiting for the player in a story does not count towards <paramref name="timeout"/>.
     /// </summary>
-    private static async Task<RunResult> Run(Func<IReadOnlyList<QuestInfo>> plan, TimeSpan timeout, CancellationToken ct)
+    private static async Task<RunResult> Run(Func<IReadOnlyList<QuestInfo>> plan, TimeSpan timeout, CancellationToken ct, Func<QuestInfo, bool>? watched = null)
     {
         var until = DateTime.UtcNow + timeout;
         var backup = await Game.Run(() => Ipc<string>("ExportQuestPriority")).ConfigureAwait(false);
@@ -261,19 +274,40 @@ internal static class QuestionableTools
         var stopArmed = false;
         // The quests the stop flag was set for, so each counts once in the workarounds, also across rounds.
         var armedQuests = new HashSet<uint>();
+        var watch = watched ?? (_ => false);
+        WatchedQuest? story = null;
+        // A round of a quest the player watches has begun: its story is theirs until the run ends or a round without one begins.
+        var storyMode = false;
+        // Of story quests the player chooses between (PlayerStory.Choice), the one whose offer they left last.
+        uint? declined = null;
         try
         {
+            // A resume or a retry can find the player still in the story of a quest they watch (its last scene, after it was turned in):
+            // it is theirs, so nothing happens before they are out of it, recovery included.
+            if (watched is not null && await Game.Run(StoryLook.InConversation).ConfigureAwait(false))
+            {
+                storyMode = true;
+                until += await WaitOutOfStory(StoryLook.InConversation, ct).ConfigureAwait(false);
+            }
             while (true)
             {
+                // After a quest the player watches, its story can go on (a cutscene, the client's lines): wait it out, never click it.
+                if (story is not null) until += await WaitOutOfStory(StoryLook.InStory, ct).ConfigureAwait(false);
                 var quests = await Game.Run(plan).ConfigureAwait(false);
                 if (quests.Count == 0) return new RunResult(true, completed, workarounds.Report());
 
-                var (first, job, accepted, noPath) = await Game.Run(() =>
+                var (first, job, accepted, noPath, choice) = await Game.Run(() =>
                 {
                     RefuseWrongJob(quests);
                     var noPath = Unsupported(quests).Select(q => q.Id).ToHashSet();
                     var next = quests.FirstOrDefault(q => !noPath.Contains(q.Id))
                                ?? throw new ToolException($"Questionable has no path for {Join(quests.Select(q => q.Name))}.");
+                    // Story quests the player chooses between (each shuts the other out): Questionable goes to one, and to the next
+                    // when the player leaves its offer.
+                    IReadOnlyList<QuestInfo> choice = watch(next) && !IsAccepted(next)
+                        ? PlayerStory.Choice(next, quests.Where(q => !noPath.Contains(q.Id) && watch(q) && !IsAccepted(q)))
+                        : [next];
+                    next = PlayerStory.Offer(choice, declined);
                     if (!IsAccepted(next) && !Ipc<string, bool>("IsReadyToAcceptQuest", next.QuestionableId))
                     {
                         var (_, reason) = Ipc<string, (bool, string)>("IsQuestLockedReason", next.QuestionableId);
@@ -283,8 +317,28 @@ internal static class QuestionableTools
                     // QuestionableWorkarounds.PickJob): accept on one that can do it.
                     var job = IsAccepted(next) ? QuestJobs.ForAccepted(AcceptedJob(next) ?? 0, Gearsets.CurrentJob(), GearsetJobs()) : JobFor(next)
                               ?? throw new ToolException($"No gearset is saved for a job that can do {next.Name} ({JobNames(next.Jobs)}).");
-                    return (next, job, IsAccepted(next), noPath);
+                    return (next, job, IsAccepted(next), noPath, choice);
                 }).ConfigureAwait(false);
+                var offer = choice.Count > 1;
+
+                // A quest the player watches: a resume or a retry can find the player still in its story, which is theirs (nothing may
+                // click it, recovery included), so it is waited out before anything else.
+                var storyRound = watch(first);
+                if (storyRound)
+                {
+                    storyMode = true;
+                    until += await WaitOutOfStory(StoryLook.InConversation, ct).ConfigureAwait(false);
+                }
+                else if (story is not null)
+                {
+                    // Back to quests that are not watched: the player is out of the story (waited out above), so TextAdvance goes
+                    // back before Questionable starts on them.
+                    await StopAfterFight(ct).ConfigureAwait(false);
+                    await Game.Run(() => { story.Dispose(); TextAdvanceControl.Release(); return true; }).ConfigureAwait(false);
+                    story = null;
+                    storyMode = false;
+                    JobManager.Instance?.PlayerInConversation("do_quests", false);
+                }
 
                 if (job != await Game.Run(Gearsets.CurrentJob).ConfigureAwait(false))
                 {
@@ -294,18 +348,48 @@ internal static class QuestionableTools
                 }
 
                 // A window that holds the character (the retainer list AutoRetainer's retainer sense opens at a bell, a shop) keeps
-                // Questionable from teleporting: it then waits forever. Close it first.
-                if (await Game.Run(() => Recovery.Occupied).ConfigureAwait(false))
+                // Questionable from teleporting: it then waits forever. Close it first, but never in a conversation of a player who
+                // watches their story.
+                if (await Game.Run(() => Recovery.Occupied && !(watched is not null && StoryLook.InConversation())).ConfigureAwait(false))
                 {
                     await Recovery.Run(ct).ConfigureAwait(false);
                     workarounds.Used(QuestionableWorkarounds.CloseBlockingWindow);
+                }
+
+                // Questionable stops and lets go of TextAdvance, which XIV MCP then holds so it skips nothing, until the watched quests
+                // are done. A hold of XIV MCP's own from an earlier run (waiting for the player to leave a scene) is kept.
+                // In a choice between quests, TextAdvance leaves their offers to the player too.
+                var notHeld = $"TextAdvance is held by another plugin or not ready, so the talk and cutscenes of {first.Name} could not be left to " +
+                              "you. Stop that plugin's automation, or do the quest without player_ranks_up.";
+                if (storyRound && story is null)
+                {
+                    await StopAfterFight(ct).ConfigureAwait(false);
+                    await GameWindows.WaitFor(() => !TextAdvanceControl.HeldByOther(), TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+                    story = await Game.Run(() =>
+                            {
+                                if (!TextAdvanceControl.Take(acceptQuests: !offer)) return null;
+                                try { return new WatchedQuest(); }
+                                catch { TextAdvanceControl.Release(); throw; }
+                            }).ConfigureAwait(false)
+                            ?? throw new ToolException(notHeld);
+                    if (TextAdvanceControl.Held) workarounds.Used(QuestionableWorkarounds.WatchStory);
+                }
+                else if (storyRound && !await Game.Run(() => TextAdvanceControl.Take(acceptQuests: !offer)).ConfigureAwait(false))
+                    throw new ToolException(notHeld);
+                if (story is not null) story.Offering = offer;
+                if (offer)
+                {
+                    var names = Join(choice.Select(q => q.Name));
+                    Svc.Log.Information($"[MCP] {names} shut each other out: the choice is yours. Going to {first.Name}'s quest giver.");
+                    JobManager.Instance?.StepProgress("do_quests", $"{names} shut each other out, so the choice is yours. Going to {first.Name}'s " +
+                                                                   "quest giver; if you do not take it, on to the next.");
                 }
 
                 // Only the quests this job can do: the others come in a later round, after switching.
                 var (batch, accepting) = await Game.Run(() =>
                 {
                     var current = Gearsets.CurrentJob();
-                    var mine = quests.Where(q => q.Id == first.Id || (IsAccepted(q) ? true : JobFor(q) == current)).ToList();
+                    var mine = PlayerStory.Round(quests.Where(q => q.Id == first.Id || (IsAccepted(q) ? true : JobFor(q) == current)).ToList(), first, watch);
                     Ipc<bool>("ClearQuestPriority");
                     foreach (var q in mine) Ipc<string, bool>("AddQuestPriority", q.QuestionableId);
                     // Several quests ready at once (the day's allied society quests, often three from one NPC): accept them all
@@ -326,10 +410,13 @@ internal static class QuestionableTools
                 // A quest counts as done only when the game's quest state says so on two checks in a row.
                 var turnedIn = new SteadyReading<uint?>(2);
                 var restarts = 0;
+                // The wait for the player after Questionable was stopped for their choice, in a watched quest, and since when.
+                StoryWait? pause = null;
+                var pausedAt = DateTime.UtcNow;
                 while (true)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (DateTime.UtcNow > until) throw new ToolException($"Not done after {timeout.TotalMinutes:0} minutes; stopped while on {first.Name}.");
+                    if (pause is null && DateTime.UtcNow > until) throw new ToolException($"Not done after {timeout.TotalMinutes:0} minutes; stopped while on {first.Name}.");
                     await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
                     // The round's last quest: Questionable stops by itself as it is done, before it picks a quest of its own. Set on
                     // every look while it runs, as any stop (a restart, a stop of its own) clears it.
@@ -339,8 +426,11 @@ internal static class QuestionableTools
                         var current = Ipc<string?>("GetCurrentQuestId");
                         return (Done: batch.FirstOrDefault(Finished), Running: running, Current: current,
                                 Position: Svc.Objects.LocalPlayer?.Position ?? default, Busy: Busy(),
-                                Armed: running ? ArmStopAfterRound(batch, noPath, current) : null);
+                                Armed: running ? ArmStopAfterRound(batch, noPath, current) : null,
+                                InStory: story is not null && StoryLook.InStory());
                     }).ConfigureAwait(false);
+                    // In a watched quest the runner must not recover (click through) while the player is in its story.
+                    if (story is not null) JobManager.Instance?.PlayerInConversation("do_quests", s.InStory || pause is not null);
                     if (s.Armed is { } armed)
                     {
                         stopArmed = true;
@@ -356,6 +446,50 @@ internal static class QuestionableTools
                     // All accepted: plan again, so Questionable gets them back as plain priority quests to do in order.
                     if (accepting.Count > 0 && await Game.Run(() => accepting.All(IsAccepted)).ConfigureAwait(false))
                         break;
+                    // A choice in a quest the player watches: Questionable was stopped before it could answer. It starts again once the
+                    // player is out of the conversation with no choice open (Questionable answers one that is open when it starts);
+                    // meanwhile XIV MCP does nothing else, and nothing counts as stopped or stalled.
+                    if (story?.TakeStop() is { } asked)
+                    {
+                        (pause, pausedAt) = (new StoryWait(), DateTime.UtcNow);
+                        workarounds.Used(QuestionableWorkarounds.ChoiceToPlayer);
+                        JobManager.Instance?.StepProgress("do_quests", $"{first.Name}: {PlayerStory.Describe(asked)} is yours.");
+                    }
+                    // Questionable stopped (by itself, after a step) while a choice is open: the player's too, it is not started on it.
+                    else if (story is not null && pause is null && !s.Running && await Game.Run(ChoiceOpen).ConfigureAwait(false))
+                        (pause, pausedAt) = (new StoryWait(), DateTime.UtcNow);
+                    if (pause is not null)
+                    {
+                        var (inStory, held, choiceOpen) = await Game.Run(() => (StoryLook.InStory(), StoryLook.HeldWithoutWindow(), ChoiceOpen())).ConfigureAwait(false);
+                        var leftOffer = false;
+                        switch (pause.Poll(DateTime.UtcNow, inStory || choiceOpen, held && !choiceOpen))
+                        {
+                            case StoryEnd.Over:
+                                pause = null;
+                                until += DateTime.UtcNow - pausedAt;
+                                var (finished, taken) = await Game.Run(() => (batch.Any(Finished), IsAccepted(first))).ConfigureAwait(false);
+                                // Turned in during the conversation: the done check ends the round. Started now, Questionable would go
+                                // on to a quest of its own (its stop flag was cleared by the stop for the choice).
+                                if (finished) break;
+                                // The player left the offer of a quest they choose between: on to the next one.
+                                if (offer && !taken)
+                                {
+                                    declined = first.Id;
+                                    leftOffer = true;
+                                    Svc.Log.Information($"[MCP] You did not take {first.Name}; going on to the next quest of the choice.");
+                                    break;
+                                }
+                                var again = s.Current is { Length: > 0 } cur && ids.Contains(cur) ? cur : first.QuestionableId;
+                                Svc.Log.Information($"[MCP] You are out of the conversation; starting Questionable again on quest {again}.");
+                                await Game.Run(() => Ipc<string, bool>("StartQuest", again)).ConfigureAwait(false);
+                                stall = new StallWatch(StallLimit);
+                                break;
+                            case StoryEnd.HeldWithoutWindow:
+                                throw new ToolException(PlayerStory.HeldWithoutWindow);
+                        }
+                        if (leftOffer) break;
+                        continue;
+                    }
                     // Questionable can get stuck (walking towards a spot in another zone after a teleport went wrong) while it still
                     // reports running: starting it again from its current step gets it going.
                     // A step for the player (a duty it cannot run, a solo duty, something by hand): Questionable waits for it.
@@ -425,9 +559,14 @@ internal static class QuestionableTools
         }
         finally
         {
+            // A story left to the player stays theirs when the step ends: the job runner does not recover while they are in it.
             await StopAfterFight(CancellationToken.None).ConfigureAwait(false);
+            if (storyMode)
+                JobManager.Instance?.PlayerInConversation("do_quests", await Game.Run(() => StoryLook.InStory() || ChoiceOpen()).ConfigureAwait(false));
             await Game.Run(() =>
             {
+                story?.Dispose();
+                if (storyMode || story is not null) TextAdvanceControl.ReleaseWhenFree();
                 if (!Loaded) return true;
                 // Questionable clears the flag when it stops; set while it was stopped, it would outlast the run.
                 if (stopArmed) StopAfterCurrentQuest(false, "clearing it");
@@ -494,6 +633,148 @@ internal static class QuestionableTools
         }
 
         public void Dispose() => Svc.Chat.ChatMessage -= OnChat;
+    }
+
+    /// <summary>
+    /// While the player watches a story quest (<see cref="PlayerStory"/>): Questionable is stopped while a choice window that is the
+    /// player's (<see cref="PlayerStory.PlayersChoice"/>) is being set up, before its own handlers (which answer while it runs, after
+    /// setup) see it, and YesAlready is paused. TextAdvance is held apart (<see cref="TextAdvanceControl"/>). Framework thread.
+    /// </summary>
+    private sealed class WatchedQuest : IDisposable
+    {
+        // The Yes or No prompts Questionable answers whatever its settings in its own steps, from the Addon sheet: a high-quality
+        // turn-in, an aetheryte ticket, Return, a purchase (YesNoChoiceHandler).
+        private static readonly uint[] QuestionablePrompts = [TradeTools.HighQualityPrompt, 102686, 196, 3406];
+
+        private static readonly string[] Windows = [.. PlayerStory.ChoiceWindows, PlayerStory.OfferWindow];
+
+        private string? stoppedFor;
+        private readonly IDisposable yesAlready;
+        private bool disposed;
+
+        /// <summary>The round's quest is one of a choice between quests: its offer is the player's too.</summary>
+        public volatile bool Offering;
+
+        public WatchedQuest()
+        {
+            yesAlready = PluginCompat.PauseYesAlready("story quest");
+            try { Svc.AddonLifecycle.RegisterListener(Dalamud.Game.Addon.Lifecycle.AddonEvent.PreSetup, Windows, OnChoiceWindow); }
+            catch { yesAlready.Dispose(); throw; }
+        }
+
+        /// <summary>The choice window Questionable was stopped for since the last call, if any.</summary>
+        public string? TakeStop() => Interlocked.Exchange(ref stoppedFor, null);
+
+        private void OnChoiceWindow(Dalamud.Game.Addon.Lifecycle.AddonEvent type, Dalamud.Game.Addon.Lifecycle.AddonArgTypes.AddonArgs args)
+        {
+            try
+            {
+                if (!Loaded || !IsRunning() || (args.AddonName == PlayerStory.OfferWindow && !Offering)) return;
+                var seen = See(args);
+                if (!PlayerStory.PlayersChoice(seen))
+                {
+                    Svc.Log.Information($"[MCP] {args.AddonName} during a quest you watch, left to Questionable ({seen}).");
+                    return;
+                }
+                Ipc<string, bool>("Stop", "XIV MCP: a choice for the player");
+                stoppedFor = args.AddonName;
+                Svc.Log.Information($"[MCP] Stopped Questionable before {args.AddonName}: the choice is yours (still running: {IsRunning()}).");
+            }
+            catch (Exception e)
+            {
+                Svc.Log.Warning($"[MCP] Could not stop Questionable before {args.AddonName}: {e.Message}");
+            }
+        }
+
+        private static ChoiceSeen See(Dalamud.Game.Addon.Lifecycle.AddonArgTypes.AddonArgs args)
+        {
+            var c = Svc.Condition;
+            var inConversation = c[ConditionFlag.OccupiedInQuestEvent] || c[ConditionFlag.OccupiedInEvent] || c[ConditionFlag.OccupiedInCutSceneEvent] ||
+                                 c[ConditionFlag.Occupied33] || c[ConditionFlag.WatchingCutscene] || c[ConditionFlag.WatchingCutscene78];
+            var territory = Svc.Data.GetExcelSheet<TerritoryType>().GetRowOrDefault(Svc.ClientState.TerritoryType);
+            var questBattle = territory?.ContentFinderCondition.ValueNullable?.ContentType.RowId == 7;
+            var travelling = Navigation.LifestreamBusy || Svc.Targets.Target?.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.Aetheryte;
+            var yesNo = args.AddonName == "SelectYesno";
+            var soloDuty = yesNo && CurrentStepType() == "SinglePlayerDuty";
+            var known = yesNo && Prompt(args) is { } prompt && QuestionablePrompts.Any(row => PromptTemplate.Matches(prompt, GameWindows.TemplatePieces(row)));
+            return new ChoiceSeen(inConversation, questBattle, travelling, soloDuty, known);
+        }
+
+        /// <summary>A Yes or No window's prompt, its first value, as it is set up.</summary>
+        private static unsafe string? Prompt(Dalamud.Game.Addon.Lifecycle.AddonArgTypes.AddonArgs args)
+        {
+            if (args is not Dalamud.Game.Addon.Lifecycle.AddonArgTypes.AddonSetupArgs setup || setup.AtkValueCount == 0 || setup.AtkValues == 0) return null;
+            var v = ((AtkValue*)setup.AtkValues)[0];
+            return v.Type is AtkValueType.String or AtkValueType.ManagedString or AtkValueType.String8 && v.String.Value != null
+                ? Dalamud.Memory.MemoryHelper.ReadSeStringNullTerminated((nint)v.String.Value).TextValue
+                : null;
+        }
+
+        /// <summary>Stops listening and lets YesAlready go on; never throws, so the rest of a run's cleanup always happens.</summary>
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            try { Svc.AddonLifecycle.UnregisterListener(Dalamud.Game.Addon.Lifecycle.AddonEvent.PreSetup, Windows, OnChoiceWindow); }
+            catch (Exception e) { Svc.Log.Warning($"[MCP] Could not stop watching the story's choices: {e.Message}"); }
+            try { yesAlready.Dispose(); }
+            catch (Exception e) { Svc.Log.Warning($"[MCP] Could not let YesAlready go on: {e.Message}"); }
+        }
+    }
+
+    /// <summary>The step's arguments, with player_ranks_up only when asked for (as custom deliveries do).</summary>
+    private static JsonObject PlayerRanksUpArgs(JsonObject args, bool playerRanksUp)
+    {
+        if (playerRanksUp) args["player_ranks_up"] = true;
+        return args;
+    }
+
+    /// <summary>A choice window is open and shown. Framework thread.</summary>
+    private static bool ChoiceOpen() => PlayerStory.ChoiceWindows.Any(RetainerUi.Ready);
+
+    /// <summary>The interaction type of Questionable's current step ("SinglePlayerDuty", "Craft", ...), or null. Framework thread.</summary>
+    private static string? CurrentStepType()
+    {
+        try
+        {
+            var controller = QuestController();
+            var progress = controller.GetType().GetProperty("CurrentQuest", Any)?.GetValue(controller);
+            var quest = progress?.GetType().GetProperty("Quest", Any)?.GetValue(progress);
+            var sequence = progress?.GetType().GetProperty("Sequence", Any)?.GetValue(progress) as byte?;
+            var stepIndex = progress?.GetType().GetProperty("Step", Any)?.GetValue(progress) as int?;
+            if (quest is null || sequence is null || stepIndex is null) return null;
+            var seq = quest.GetType().GetMethod("FindSequence", Any)?.Invoke(quest, [sequence.Value]);
+            var step = seq?.GetType().GetMethod("FindStep", Any)?.Invoke(seq, [stepIndex.Value]);
+            return step?.GetType().GetProperty("InteractionType", Any)?.GetValue(step)?.ToString();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Waits until the player is out of a watched quest's story (<paramref name="inStory"/>) for two looks in a row, however long that
+    /// takes; meanwhile the job runner does not recover. Fails only when the game holds the character with no window left. Returns
+    /// how long it waited.
+    /// </summary>
+    private static async Task<TimeSpan> WaitOutOfStory(Func<bool> inStory, CancellationToken ct)
+    {
+        var since = DateTime.UtcNow;
+        var wait = new StoryWait();
+        while (true)
+        {
+            var (now, held) = await Game.Run(() => (inStory(), StoryLook.HeldWithoutWindow())).ConfigureAwait(false);
+            if (now) JobManager.Instance?.PlayerInConversation("do_quests", true);
+            switch (wait.Poll(DateTime.UtcNow, now, held))
+            {
+                case StoryEnd.Over:
+                    JobManager.Instance?.PlayerInConversation("do_quests", false);
+                    return DateTime.UtcNow - since;
+                case StoryEnd.HeldWithoutWindow: throw new ToolException(PlayerStory.HeldWithoutWindow);
+            }
+            await Task.Delay(1000, ct).ConfigureAwait(false);
+        }
     }
 
     // ------------------------------------------------------------------ Planning (framework thread)

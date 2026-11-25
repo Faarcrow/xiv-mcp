@@ -655,7 +655,7 @@ public class PlayerRankUpTests
                  {
                      PlayerRankUp.Ask("Medical Supplies", "Charlemend"), PlayerRankUp.TimedOut("Medical Supplies", "Charlemend", true, false),
                      PlayerRankUp.TimedOut("Medical Supplies", "Charlemend", false, true), PlayerRankUp.WentInShort("Medical Supplies", "Charlemend"),
-                     PlayerRankUp.StillInStory("Charlemend"), PlayerRankUp.HeldWithoutWindow("Charlemend"), PlayerRankUp.AlreadyRankedUp("Charlemend", 3),
+                     PlayerRankUp.HeldWithoutWindow("Charlemend"), PlayerRankUp.AlreadyRankedUp("Charlemend", 3),
                      PlayerRankUp.NotCounted("Medical Supplies", "Charlemend", true), PlayerRankUp.NotCounted("Medical Supplies", "Charlemend", false),
                  })
             Assert.DoesNotMatch(@"(n't|'re|'ve|'ll|'d|(it|that|there|what)'s|I'm)", text);
@@ -758,7 +758,7 @@ public class PlayerRankUpTests
     [Fact]
     public void After_the_hand_in_the_story_is_over_after_two_looks_out_of_it()
     {
-        var story = new StoryWait(Asked);
+        var story = new StoryWait();
         Assert.Equal(StoryEnd.Wait, story.Poll(Asked.AddSeconds(2), inConversation: false, heldWithoutWindow: false));
         Assert.Equal(StoryEnd.Wait, story.Poll(Asked.AddSeconds(4), inConversation: true, heldWithoutWindow: false));
         Assert.Equal(StoryEnd.Wait, story.Poll(Asked.AddSeconds(6), inConversation: false, heldWithoutWindow: false));
@@ -766,10 +766,10 @@ public class PlayerRankUpTests
     }
 
     [Fact]
-    public void A_story_that_holds_the_character_too_long_is_reported()
+    public void The_story_is_waited_out_however_long_it_lasts_but_a_hold_with_no_window_is_reported()
     {
-        Assert.Equal(StoryEnd.TooLong, new StoryWait(Asked).Poll(Asked.AddMinutes(11), inConversation: true, heldWithoutWindow: false));
-        var held = new StoryWait(Asked);
+        Assert.Equal(StoryEnd.Wait, new StoryWait().Poll(Asked.AddHours(5), inConversation: true, heldWithoutWindow: false));
+        var held = new StoryWait();
         Assert.Equal(StoryEnd.Wait, held.Poll(Asked.AddMinutes(2), inConversation: true, heldWithoutWindow: true));
         Assert.Equal(StoryEnd.Wait, held.Poll(Asked.AddMinutes(2.5), inConversation: true, heldWithoutWindow: true));
         Assert.Equal(StoryEnd.HeldWithoutWindow, held.Poll(Asked.AddMinutes(3.1), inConversation: true, heldWithoutWindow: true));

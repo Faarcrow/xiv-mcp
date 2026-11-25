@@ -21,9 +21,6 @@ public static class PlayerRankUp
     /// <summary>How long the game gets to count a delivery after XIV MCP pressed Hand Over (in game it took a second or two).</summary>
     public static readonly TimeSpan HandOverLimit = TimeSpan.FromSeconds(10);
 
-    /// <summary>How long the client's story may hold the character after the rank changed.</summary>
-    public static readonly TimeSpan StoryLimit = TimeSpan.FromMinutes(10);
-
     /// <summary>How long the game may hold the character after the rank changed with no window and no cutscene left.</summary>
     public static readonly TimeSpan HeldWithoutWindowLimit = TimeSpan.FromMinutes(1);
 
@@ -52,10 +49,6 @@ public static class PlayerRankUp
     public static string WentInShort(string item, string client) =>
         $"{item} went in, but {client} did not reach the next rank: a delivery below the top collectability tier gives less " +
         "satisfaction. The delivery counts.";
-
-    public static string StillInStory(string client) =>
-        $"{client}'s delivery went in, but the game still holds you in the conversation after {StoryLimit.TotalMinutes:0} minutes. The " +
-        "delivery is done: finish the conversation yourself, then skip this step to go on.";
 
     public static string HeldWithoutWindow(string client) =>
         $"{client}'s delivery went in, but the game still holds the character with no window left. The delivery is done: " +
@@ -111,14 +104,15 @@ public sealed class HandInWait(DateTime asked, int deliveriesLeft, bool handedOv
     }
 }
 
-public enum StoryEnd { Wait, Over, TooLong, HeldWithoutWindow }
+public enum StoryEnd { Wait, Over, HeldWithoutWindow }
 
 /// <summary>
 /// The wait for the player to be out of the client's conversation after their hand-in, one look per poll: over after two looks in a
-/// row out of it (a story can let go for a moment between two parts); stuck when it lasts past <see cref="PlayerRankUp.StoryLimit"/>,
-/// or when the game holds the character with no window or cutscene for <see cref="PlayerRankUp.HeldWithoutWindowLimit"/>.
+/// row out of it (a story can let go for a moment between two parts). It waits as long as the player is in the story; it is only stuck
+/// when the game holds the character with no window or cutscene for <see cref="PlayerRankUp.HeldWithoutWindowLimit"/>, which the
+/// player cannot end either. Also the wait for an allied society's story quest (<see cref="Quests.PlayerStory"/>).
 /// </summary>
-public sealed class StoryWait(DateTime since)
+public sealed class StoryWait
 {
     private int outPolls;
     private DateTime? heldSince;
@@ -132,8 +126,7 @@ public sealed class StoryWait(DateTime since)
         }
         outPolls = 0;
         heldSince = heldWithoutWindow ? heldSince ?? now : null;
-        if (heldSince is { } held && now - held > PlayerRankUp.HeldWithoutWindowLimit) return StoryEnd.HeldWithoutWindow;
-        return now - since > PlayerRankUp.StoryLimit ? StoryEnd.TooLong : StoryEnd.Wait;
+        return heldSince is { } held && now - held > PlayerRankUp.HeldWithoutWindowLimit ? StoryEnd.HeldWithoutWindow : StoryEnd.Wait;
     }
 }
 
