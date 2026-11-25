@@ -6,8 +6,9 @@ using System.Text.Json.Nodes;
 namespace XivMcp.CustomDeliveries;
 
 /// <summary>
-/// The delivery that ranks a client up, left to the player so they can watch the client's story (player_ranks_up): XIV MCP makes the
-/// item and takes the character to the client, then waits without touching the conversation.
+/// The delivery that ranks a client up, with the client's story left to the player so they can watch it (player_ranks_up): XIV MCP
+/// makes the item, takes the character to the client and hands it in, then waits without touching the story. When its hand-in cannot
+/// get to Hand Over, the player is asked to hand it in.
 /// </summary>
 public static class PlayerRankUp
 {
@@ -16,6 +17,9 @@ public static class PlayerRankUp
 
     /// <summary>How long XIV MCP waits at most, also while the player is in a conversation.</summary>
     public static readonly TimeSpan HardLimit = TimeSpan.FromHours(2);
+
+    /// <summary>How long the game gets to count a delivery after XIV MCP pressed Hand Over (in game it took a second or two).</summary>
+    public static readonly TimeSpan HandOverLimit = TimeSpan.FromSeconds(10);
 
     /// <summary>How long the client's story may hold the character after the rank changed.</summary>
     public static readonly TimeSpan StoryLimit = TimeSpan.FromMinutes(10);
@@ -37,8 +41,16 @@ public static class PlayerRankUp
             : $", and {item} is not in your bags any more. Retry this step to have it made again and be asked again, or skip it.") +
         (inConversation ? " You are still in a conversation, which XIV MCP leaves alone." : "");
 
+    /// <param name="windowOpen">The hand-over window is still open: the click did not land, and no story started.</param>
+    public static string NotCounted(string item, string client, bool windowOpen) =>
+        $"XIV MCP pressed Hand Over for {item}, but {client}'s deliveries left did not go down within {HandOverLimit.TotalSeconds:0} seconds, " +
+        (windowOpen
+            ? "and the hand-over window was still open, so the click did not land. Retry this step to hand it in again."
+            : "and the hand-over window closed. Check get_custom_deliveries: when the delivery went in after all, skip this step; otherwise " +
+              "retry it.");
+
     public static string WentInShort(string item, string client) =>
-        $"You handed in {item}, but {client} did not reach the next rank: a delivery below the top collectability tier gives less " +
+        $"{item} went in, but {client} did not reach the next rank: a delivery below the top collectability tier gives less " +
         "satisfaction. The delivery counts.";
 
     public static string StillInStory(string client) =>
@@ -49,18 +61,31 @@ public static class PlayerRankUp
         $"{client}'s delivery went in, but the game still holds the character with no window left. The delivery is done: " +
         "recover_game_state gets the character free, then skip this step to go on.";
 
+    /// <summary>
+    /// What the hand-in came to, judged once the player is out of the client's story: the game counts the delivery at Hand Over, but
+    /// changes the rank only later, in the story, so a delivery that went in ranked the client up when the rank has changed by then.
+    /// </summary>
+    public static HandIn AfterStory(HandIn outcome, bool rankChanged) =>
+        outcome == HandIn.WentIn ? rankChanged ? HandIn.RankedUp : HandIn.WentInShort : outcome;
+
     public static string AlreadyRankedUp(string client, int rank) =>
         $"{client} reached rank {rank} in an earlier run of this step: the rank-up was handed in, nothing more to deliver here.";
 }
 
-public enum HandIn { Wait, RankedUp, WentInShort, TimedOut, TimedOutInConversation }
+/// <summary>
+/// How the wait for the hand-in ended. <see cref="WentIn"/>: the delivery is counted, the rank not (yet) changed; see
+/// <see cref="PlayerRankUp.AfterStory"/>. <see cref="NotCounted"/>: XIV MCP pressed Hand Over, but the delivery was not counted.
+/// </summary>
+public enum HandIn { Wait, RankedUp, WentIn, WentInShort, NotCounted, TimedOut, TimedOutInConversation }
 
 /// <summary>
 /// The wait for the player's hand-in, one look per poll. A conversation counts as the player's only when it started after they were
 /// asked (they were seen out of one first): the client's menu Satisfier left open, or any other one held from before, does not keep
 /// the wait going, and recovery may close it. The player's own one is left alone (<see cref="PlayersConversation"/>).
+/// <paramref name="handedOver"/>: XIV MCP pressed Hand Over itself, so the delivery has <see cref="PlayerRankUp.HandOverLimit"/> to be
+/// counted instead of the player's time to hand it in.
 /// </summary>
-public sealed class HandInWait(DateTime asked, int deliveriesLeft)
+public sealed class HandInWait(DateTime asked, int deliveriesLeft, bool handedOver = false)
 {
     private bool freeSinceAsked;
     private int wentInPolls;
@@ -75,10 +100,12 @@ public sealed class HandInWait(DateTime asked, int deliveriesLeft)
         if (!inConversation) freeSinceAsked = true;
         PlayersConversation = inConversation && freeSinceAsked;
         if (rankChanged) return HandIn.RankedUp;
-        // The game counts the delivery and changes the rank together: a second look makes sure the rank did not follow.
+        // The delivery is counted at Hand Over; the rank changes later, in the client's story (judged then: PlayerRankUp.AfterStory).
+        // A second look makes sure the count holds.
         wentInPolls = deliveriesLeftNow < deliveriesLeft ? wentInPolls + 1 : 0;
-        if (wentInPolls >= 2) return HandIn.WentInShort;
+        if (wentInPolls >= 2) return HandIn.WentIn;
         var waited = now - asked;
+        if (handedOver && wentInPolls == 0 && waited > PlayerRankUp.HandOverLimit) return HandIn.NotCounted;
         if (waited > PlayerRankUp.HardLimit) return PlayersConversation ? HandIn.TimedOutInConversation : HandIn.TimedOut;
         return waited > PlayerRankUp.Limit && !PlayersConversation ? HandIn.TimedOut : HandIn.Wait;
     }

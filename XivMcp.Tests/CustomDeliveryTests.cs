@@ -656,6 +656,7 @@ public class PlayerRankUpTests
                      PlayerRankUp.Ask("Medical Supplies", "Charlemend"), PlayerRankUp.TimedOut("Medical Supplies", "Charlemend", true, false),
                      PlayerRankUp.TimedOut("Medical Supplies", "Charlemend", false, true), PlayerRankUp.WentInShort("Medical Supplies", "Charlemend"),
                      PlayerRankUp.StillInStory("Charlemend"), PlayerRankUp.HeldWithoutWindow("Charlemend"), PlayerRankUp.AlreadyRankedUp("Charlemend", 3),
+                     PlayerRankUp.NotCounted("Medical Supplies", "Charlemend", true), PlayerRankUp.NotCounted("Medical Supplies", "Charlemend", false),
                  })
             Assert.DoesNotMatch(@"(n't|'re|'ve|'ll|'d|(it|that|there|what)'s|I'm)", text);
     }
@@ -715,10 +716,43 @@ public class PlayerRankUpTests
     [Fact]
     public void A_hand_in_that_does_not_rank_up_ends_the_wait_after_a_second_look()
     {
-        // The rank may change a moment after the delivery is counted: only a second look without it is a delivery that fell short.
+        // The delivery is counted at Hand Over, the rank only later in the story: a counted delivery ends the wait either way.
         var wait = new HandInWait(Asked, deliveriesLeft: 3);
         Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddMinutes(2), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
-        Assert.Equal(HandIn.WentInShort, wait.Poll(Asked.AddMinutes(2.1), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
+        Assert.Equal(HandIn.WentIn, wait.Poll(Asked.AddMinutes(2.1), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
+    }
+
+    [Fact]
+    public void A_hand_over_by_xiv_mcp_must_be_counted_within_seconds()
+    {
+        var wait = new HandInWait(Asked, deliveriesLeft: 3, handedOver: true);
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddSeconds(2), inConversation: true, rankChanged: false, deliveriesLeftNow: 3));
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddSeconds(8), inConversation: true, rankChanged: false, deliveriesLeftNow: 3));
+        Assert.Equal(HandIn.NotCounted, wait.Poll(Asked.AddSeconds(12), inConversation: true, rankChanged: false, deliveriesLeftNow: 3));
+    }
+
+    [Fact]
+    public void A_hand_over_counted_at_the_limit_still_gets_its_second_look()
+    {
+        var wait = new HandInWait(Asked, deliveriesLeft: 3, handedOver: true);
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddSeconds(10.5), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
+        Assert.Equal(HandIn.WentIn, wait.Poll(Asked.AddSeconds(12.5), inConversation: true, rankChanged: false, deliveriesLeftNow: 2));
+    }
+
+    [Fact]
+    public void The_player_handing_in_is_not_held_to_the_hand_over_limit()
+    {
+        var wait = new HandInWait(Asked, deliveriesLeft: 3);
+        Assert.Equal(HandIn.Wait, wait.Poll(Asked.AddMinutes(5), inConversation: false, rankChanged: false, deliveriesLeftNow: 3));
+    }
+
+    [Fact]
+    public void Whether_the_hand_in_ranked_the_client_up_is_judged_after_the_story()
+    {
+        // Kai-Shirr, 2026-11-24: the count dropped at Hand Over, rank 2 to 3 came during the story.
+        Assert.Equal(HandIn.RankedUp, PlayerRankUp.AfterStory(HandIn.WentIn, rankChanged: true));
+        Assert.Equal(HandIn.WentInShort, PlayerRankUp.AfterStory(HandIn.WentIn, rankChanged: false));
+        Assert.Equal(HandIn.RankedUp, PlayerRankUp.AfterStory(HandIn.RankedUp, rankChanged: true));
     }
 
     [Fact]

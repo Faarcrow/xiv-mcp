@@ -150,6 +150,7 @@ public static class IntegrationCatalog
                 ["deliver_custom_delivery"] = DeliveryHelpers,
                 ["do_custom_deliveries"] = DeliveryHelpers,
             },
+            Workarounds = SatisfierWorkarounds.All,
         },
         new("DistantSeas", "Ocean fishing", "Ocean fishing voyages: the schedule and routes, boarding at the ferry docks, and a job that fishes voyages with AutoHook until a target.", new Dictionary<string, string[]>
         {
