@@ -163,10 +163,16 @@ internal static class DyeTools
         return item != null && item->ItemId == itemId ? item->GetStain(channel - 1) : (byte)0;
     }
 
+    /// <summary>
+    /// Opens the item's context menu as if right-clicked in the window it is shown in: the character window for worn gear, the
+    /// armoury chest for armoury gear (an armoury item's menu owned by the bags has no Dye entry), the bags otherwise. A window that
+    /// isn't open is left out (owner 0), as sell_to_vendor does.
+    /// </summary>
     private static unsafe void OpenContextMenu(InventoryType container, int slot)
     {
-        var owner = RetainerUi.Ptr(container == InventoryType.EquippedItems ? "Character" : "Inventory");
-        var ownerId = owner.IsNull ? 0u : (uint)((AtkUnitBase*)owner.Address)->Id;
+        var window = container == InventoryType.EquippedItems ? "Character" : Items.Armoury.Contains(container) ? "ArmouryBoard" : "Inventory";
+        var owner = RetainerUi.Ptr(window);
+        var ownerId = owner.IsNull || !((AtkUnitBase*)owner.Address)->IsVisible ? 0u : (uint)((AtkUnitBase*)owner.Address)->Id;
         AgentInventoryContext.Instance()->OpenForItemSlot(container, slot, 0, ownerId);
     }
 
