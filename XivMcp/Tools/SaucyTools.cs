@@ -552,6 +552,9 @@ internal static class SaucyTools
                 };
                 await Game.Run(() =>
                 {
+                    // Saucy farms the cards of the opponent the player targets (when standing near), else of the last one it played:
+                    // a finished last opponent ends the new run at once, and Saucy clicks the challenge away as it stops.
+                    Target(npc.NpcId);
                     SaucyBridge.Command(command);
                     SaucyBridge.Command("tt go");
                     Interact(npc.NpcId);
