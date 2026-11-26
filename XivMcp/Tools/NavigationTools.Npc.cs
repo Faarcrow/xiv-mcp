@@ -401,8 +401,9 @@ internal static partial class NavigationTools
                 await Task.Delay(250, ct).ConfigureAwait(false);
                 continue;
             }
-            var distance = await Game.Run(() => Svc.Objects.LocalPlayer is { } p ? Flat(p.Position, target) : float.MaxValue).ConfigureAwait(false);
-            if (approach.Stalled(distance, DateTime.UtcNow))
+            var (distance, left) = await Game.Run(() => Svc.Objects.LocalPlayer is { } p ? (Flat(p.Position, target), PathLeft(p.Position)) : (float.MaxValue, null))
+                .ConfigureAwait(false);
+            if (approach.Stalled(left ?? distance, DateTime.UtcNow))
             {
                 await Game.Run(() => { StopMoving(); return true; }).ConfigureAwait(false);
                 throw new ToolException($"Stuck on the way to {label} ({distance:0} yalms away): the path runs into an obstacle.");

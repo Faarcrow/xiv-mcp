@@ -372,8 +372,9 @@ internal static partial class NavigationTools
                     await Task.Delay(250, ct).ConfigureAwait(false);
                     continue;
                 }
-                var distance =await Game.Run(() => Game.DistanceToPlayer(t.Position) ?? float.MaxValue).ConfigureAwait(false);
-                if (approach.Stalled(distance, DateTime.UtcNow))
+                var (distance, left) = await Game.Run(() => (Game.DistanceToPlayer(t.Position) ?? float.MaxValue,
+                    Svc.Objects.LocalPlayer is { } p ? PathLeft(p.Position) : null)).ConfigureAwait(false);
+                if (approach.Stalled(left ?? distance, DateTime.UtcNow))
                 {
                     await Game.Run(() => { StopMoving(); return true; }).ConfigureAwait(false);
                     steps.Add($"vnavmesh: stopped, no longer getting closer ({distance:0.#} yalms away).");
