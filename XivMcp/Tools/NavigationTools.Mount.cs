@@ -63,6 +63,10 @@ internal static partial class NavigationTools
         }
         if (await Game.Run(() => Mounted).ConfigureAwait(false))
             throw new ToolException("Could not get off the mount here (the ground below may be water or too steep). Move a bit and try again.");
+        // The landing goes on for a moment after the mount is gone, and the game refuses talking to anyone until it ends.
+        var landed = DateTime.UtcNow.AddSeconds(3);
+        while (DateTime.UtcNow < landed && await Game.Run(() => Landing).ConfigureAwait(false))
+            await Task.Delay(100, ct).ConfigureAwait(false);
         steps.Add("Got off the mount.");
     }
 
