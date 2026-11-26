@@ -58,7 +58,7 @@ internal static class SaucyTools
                     var owned = TriadData.Owned(npcs.SelectMany(n => n.RewardCards).Distinct());
                     var bags = TriadData.InBags(npcs.SelectMany(n => n.RewardCards).Distinct().Select(c => db.Cards[c]));
                     var rows = npcs.Where(n => !missingOnly || n.RewardCards.Any(c => !owned.Contains(c) && !bags.Contains(c)))
-                                   .Select(n => (Npc: n, Available: TriadData.Availability(n, owned)))
+                                   .Select(n => (Npc: n, Available: TriadData.Availability(n)))
                                    .Where(r => !availableOnly || r.Available is { Unlocked: true, OpenNow: true }).ToList();
                     return new
                     {
@@ -642,7 +642,7 @@ internal static class SaucyTools
             {
                 var missing = n.RewardCards.Where(c => !owned.Contains(c) && !bags.Contains(c)).ToList();
                 if (missing.Count == 0) continue;
-                var a = TriadData.Availability(n, owned);
+                var a = TriadData.Availability(n);
                 if (!a.Unlocked) skipped.Add(new { npc = n.Name, n.Zone, reason = $"Needs a quest first: {string.Join(" or ", a.MissingQuests)}." });
                 else if (skipUnavailable && !a.OpenNow) skipped.Add(new { npc = n.Name, n.Zone, reason = $"Only plays {a.Hours}." });
                 else stops.Add(new TriadStop(n.TriadId, n.Name, n.Spot.Territory, n.Zone, n.Spot.Position, missing));
@@ -685,7 +685,7 @@ internal static class SaucyTools
     {
         var (unlocked, quests) = await Game.Run(() =>
         {
-            var a = TriadData.Availability(npc, TriadData.Owned(npc.RewardCards));
+            var a = TriadData.Availability(npc);
             return (a.Unlocked, a.MissingQuests);
         }).ConfigureAwait(false);
         if (!unlocked) throw new ToolException($"{npc.Name} can't be challenged yet: finish {string.Join(" or ", quests)} first.");

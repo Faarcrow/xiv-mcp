@@ -31,11 +31,11 @@ public static class EorzeaClock
 public static class TriadAvailability
 {
     /// <summary>
-    /// Unlocked when the opponent needs no quest, any of their unlock quests is complete, or the player has already beaten them or
-    /// owns one of their cards (which can only happen after playing them).
+    /// Unlocked when the opponent needs no quest, any of their unlock quests is complete, or the player has already beaten them.
+    /// Owning one of their cards proves nothing: most cards also come from packs, duties or vendors (Saucy counts it anyway).
     /// </summary>
-    public static bool IsUnlocked(bool beaten, bool ownsAReward, IReadOnlyCollection<uint> quests, Func<uint, bool> isComplete) =>
-        beaten || ownsAReward || quests.Count == 0 || quests.Any(isComplete);
+    public static bool IsUnlocked(bool beaten, IReadOnlyCollection<uint> quests, Func<uint, bool> isComplete) =>
+        beaten || quests.Count == 0 || quests.Any(isComplete);
 }
 
 /// <summary>A stop of a card-farming route: an opponent, where they stand, and the cards still missing from them.</summary>
