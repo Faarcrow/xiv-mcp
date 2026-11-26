@@ -40,7 +40,8 @@ internal static class TriadData
 
     /// <summary>
     /// An NPC anywhere in the world by name (as the game spells it, ignoring case; a unique part of a name also works), from the
-    /// game data. Prefers one placed in <paramref name="preferTerritory"/>. Off the framework thread is fine.
+    /// game data. Of several NPCs with that name, prefers the one that stands there for good over copies a quest places
+    /// (<see cref="Maps.NpcPick"/>), then the nearest: placed in <paramref name="preferTerritory"/>, then in its area. Off the framework thread is fine.
     /// </summary>
     public static NavigationTools.NpcSpot? FindNpc(string name, uint preferTerritory)
     {
@@ -51,8 +52,13 @@ internal static class TriadData
         var matches = exact.Count > 0 ? exact : placed.Where(r => r.Name.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
         if (matches.Select(m => m.Name.ToLowerInvariant()).Distinct().Count() > 1)
             throw new Mcp.ToolException($"'{q}' matches several NPCs: {string.Join(", ", matches.Select(m => m.Name).Distinct().Take(8))}. Give the full name.");
-        var best = matches.OrderBy(m => Places.Value[m.Id].Territory == preferTerritory ? 0 : 1).FirstOrDefault();
-        if (best.Id == 0) return null;
+        var bases = Svc.Data.GetExcelSheet<ENpcBase>();
+        var zones = Svc.Data.GetExcelSheet<TerritoryType>();
+        uint Area(uint territory) => zones.GetRowOrDefault(territory)?.PlaceNameZone.RowId ?? 0;
+        var pick = Maps.NpcPick.Best(matches.Select(m => new Maps.NpcCandidate(m.Id, Places.Value[m.Id].Territory, Area(Places.Value[m.Id].Territory),
+            bases.GetRowOrDefault(m.Id)?.ENpcData.Select(d => d.RowId).Where(d => d != 0).ToList() ?? [])), preferTerritory, Area(preferTerritory));
+        if (pick is null) return null;
+        var best = matches.First(m => m.Id == pick.Id);
         var display = char.ToUpperInvariant(best.Name[0]) + best.Name[1..];
         return Locate(best.Id, display);
     }
