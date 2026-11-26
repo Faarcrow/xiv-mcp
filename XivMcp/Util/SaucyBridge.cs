@@ -52,7 +52,7 @@ internal static class SaucyBridge
 
     /// <summary>
     /// Matches Saucy has played in all (its lifetime stat). Saucy's own per-run count (MatchesCompletedThisSession) only counts in its
-    /// "play X matches" mode, not while it plays until a card drops.
+    /// "play X matches" mode, not while it farms cards.
     /// </summary>
     public static int GamesPlayed => System.Convert.ToInt32(Get(Get(Config, "Stats") ?? throw Unsupported("Configuration.Stats"), "GamesPlayedWithSaucy"));
 
