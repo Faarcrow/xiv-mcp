@@ -48,6 +48,7 @@ internal static partial class NavigationTools
     internal static async Task<object> GoToNpc(NpcSpot spot, List<string> steps, CancellationToken ct)
     {
         await Game.RunLoggedIn(() => { EnsureCanTravel(); return true; }).ConfigureAwait(false);
+        await WaitOutCasts(ct).ConfigureAwait(false);
         // Map positions have no height: the nearest shard (or the spot the player stands at) can be on a level the NPC can't be
         // walked to from. Then travel once more, by another aetheryte or shard.
         var tried = new HashSet<uint>();
