@@ -417,6 +417,7 @@ internal static partial class NavigationTools
 
     /// <summary>
     /// Waits until the character has not been casting for a second (up to 15 seconds): a teleport asked for during a cast is refused.
+    /// A cast can still begin right after; travel asks again when refused.
     /// Casts often come in a row right after a step, e.g. Saucy registering the cards that just dropped, one item use each.
     /// </summary>
     private static async Task WaitOutCasts(CancellationToken ct)

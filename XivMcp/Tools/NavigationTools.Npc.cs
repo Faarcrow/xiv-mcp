@@ -185,6 +185,14 @@ internal static partial class NavigationTools
                     }
                     catch (Exception ex) { Svc.Log.Warning($"[MCP] Lifestream travel failed: {ex.Message}"); return false; }
                 }).ConfigureAwait(false);
+                if (!ok && attempt < 3)
+                {
+                    // Refused while casting: a cast can begin after the wait above (Saucy registers dropped cards a moment after
+                    // its run ends), so wait it out and ask again.
+                    steps.Add("Lifestream refused the trip; waiting out casts and asking again.");
+                    await WaitOutCasts(ct).ConfigureAwait(false);
+                    continue;
+                }
                 if (!ok) throw new ToolException($"Lifestream could not travel to {plan.Value.Label} (is the aetheryte attuned?).");
                 steps.Add($"Lifestream: {(plan.Value.Shard ? "aethernet" : "teleport")} to {plan.Value.Label}.");
                 await Task.Delay(2000, ct).ConfigureAwait(false);
