@@ -41,19 +41,23 @@ internal static class TriadData
     /// <summary>
     /// An NPC anywhere in the world by name (as the game spells it, ignoring case; a unique part of a name also works), from the
     /// game data. Of several NPCs with that name, prefers the one that stands there for good over copies a quest places
-    /// (<see cref="Maps.NpcPick"/>), then the nearest: placed in <paramref name="preferTerritory"/>, then in its area. Off the framework thread is fine.
+    /// (<see cref="Maps.NpcPick"/>), then the nearest: placed in <paramref name="preferTerritory"/>, then in its area. With
+    /// <paramref name="zone"/>, only NPCs whose zone or area name contains it count. Off the framework thread is fine.
     /// </summary>
-    public static NavigationTools.NpcSpot? FindNpc(string name, uint preferTerritory)
+    public static NavigationTools.NpcSpot? FindNpc(string name, uint preferTerritory, string? zone = null)
     {
         var q = name.Trim();
         var residents = Svc.Data.GetExcelSheet<ENpcResident>();
-        var placed = residents.Where(r => Places.Value.ContainsKey(r.RowId)).Select(r => (Id: r.RowId, Name: r.Singular.ExtractText())).Where(r => r.Name.Length > 0).ToList();
+        var zones = Svc.Data.GetExcelSheet<TerritoryType>();
+        bool InZone(uint territory) => zone is null || zones.GetRowOrDefault(territory) is { } t &&
+            new[] { Excel.Name(t.PlaceName), Excel.Name(t.PlaceNameZone) }.Any(n => n?.Contains(zone.Trim(), StringComparison.OrdinalIgnoreCase) == true);
+        var placed = residents.Where(r => Places.Value.TryGetValue(r.RowId, out var p) && InZone(p.Territory))
+            .Select(r => (Id: r.RowId, Name: r.Singular.ExtractText())).Where(r => r.Name.Length > 0).ToList();
         var exact = placed.Where(r => r.Name.Equals(q, StringComparison.OrdinalIgnoreCase)).ToList();
         var matches = exact.Count > 0 ? exact : placed.Where(r => r.Name.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
         if (matches.Select(m => m.Name.ToLowerInvariant()).Distinct().Count() > 1)
             throw new Mcp.ToolException($"'{q}' matches several NPCs: {string.Join(", ", matches.Select(m => m.Name).Distinct().Take(8))}. Give the full name.");
         var bases = Svc.Data.GetExcelSheet<ENpcBase>();
-        var zones = Svc.Data.GetExcelSheet<TerritoryType>();
         uint Area(uint territory) => zones.GetRowOrDefault(territory)?.PlaceNameZone.RowId ?? 0;
         var pick = Maps.NpcPick.Best(matches.Select(m => new Maps.NpcCandidate(m.Id, Places.Value[m.Id].Territory, Area(Places.Value[m.Id].Territory),
             bases.GetRowOrDefault(m.Id)?.ENpcData.Select(d => d.RowId).Where(d => d != 0).ToList() ?? [])), preferTerritory, Area(preferTerritory));
