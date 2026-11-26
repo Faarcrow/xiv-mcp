@@ -585,25 +585,25 @@ internal static class SaucyTools
         };
     }
 
-    /// <summary>Waits until Saucy's run ends; returns the matches it finished (sampled, as Saucy resets the count when it ends).</summary>
+    /// <summary>Waits until Saucy's run ends; returns the matches it finished.</summary>
     private static async Task<int> WaitForRun(string npc, CancellationToken ct)
     {
+        var before = await Game.Run(() => SaucyBridge.GamesPlayed).ConfigureAwait(false);
         var started = await WaitFor(() => SaucyBridge.TriadRunning, TimeSpan.FromSeconds(10), ct).ConfigureAwait(false);
         if (!started) throw new ToolException("Saucy did not start playing.");
-        var most = 0;
         var lastReported = -1;
         var deadline = DateTime.UtcNow.AddHours(6);
         while (DateTime.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
-            var (running, done) = await Game.Run(() => (SaucyBridge.TriadRunning, SaucyBridge.MatchesThisRun)).ConfigureAwait(false);
-            most = Math.Max(most, done);
-            if (most != lastReported)
+            var (running, games) = await Game.Run(() => (SaucyBridge.TriadRunning, SaucyBridge.GamesPlayed)).ConfigureAwait(false);
+            var done = games - before;
+            if (done != lastReported)
             {
-                Progress("play_triple_triad", $"{most} match{(most == 1 ? "" : "es")} against {npc}");
-                lastReported = most;
+                Progress("play_triple_triad", $"{done} match{(done == 1 ? "" : "es")} against {npc}");
+                lastReported = done;
             }
-            if (!running) return Math.Max(most, await Game.Run(() => SaucyBridge.MatchesThisRun).ConfigureAwait(false));
+            if (!running) return await Game.Run(() => SaucyBridge.GamesPlayed - before).ConfigureAwait(false);
             await Task.Delay(500, ct).ConfigureAwait(false);
         }
         throw new ToolException("Saucy has been playing for 6 hours without finishing; stopping here.");

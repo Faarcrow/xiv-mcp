@@ -50,8 +50,11 @@ internal static class SaucyBridge
     /// <summary>True while Saucy's Triple Triad automation is on (a run is going or about to start).</summary>
     public static bool TriadRunning => StaticValue("Saucy.TripleTriad.TriadRunSession", "ModuleEnabled") is true;
 
-    /// <summary>Matches finished in the current run (reset to 0 when the run ends).</summary>
-    public static int MatchesThisRun => StaticValue("Saucy.TripleTriad.TriadRunSession", "MatchesCompletedThisSession") is int n ? n : 0;
+    /// <summary>
+    /// Matches Saucy has played in all (its lifetime stat). Saucy's own per-run count (MatchesCompletedThisSession) only counts in its
+    /// "play X matches" mode, not while it plays until a card drops.
+    /// </summary>
+    public static int GamesPlayed => System.Convert.ToInt32(Get(Get(Config, "Stats") ?? throw Unsupported("Configuration.Stats"), "GamesPlayedWithSaucy"));
 
     /// <summary>True while Saucy's deck optimizer builds a deck.</summary>
     public static bool OptimizerBusy => StaticValue("Saucy.TripleTriad.UI.TriadDeckOptimizerJobs", "InProgressAny") is true;
