@@ -92,7 +92,7 @@ When the quests need different jobs, XIV MCP does the quests of one job, then sw
 
 ## Workarounds
 
-Most of what this page describes is XIV MCP planning the quests and watching Questionable. Some of it is XIV MCP stepping in where Questionable falls short: picking the jobs, accepting several ready quests at once, the steps it skips, and the Yes to a high-quality turn-in.
+Most of what this page describes is XIV MCP planning the quests and watching Questionable. Some of it is XIV MCP stepping in where Questionable falls short: picking the jobs, accepting several ready quests at once, the steps it skips, the Yes to a high-quality turn-in, and stopping it after the last quest.
 
 The job's result names the Questionable version it ran with and the workarounds it used, with how often (`workarounds`). Every workaround, with what Questionable does on its own and the Questionable version it was last checked against, is on [Plugins XIV MCP uses](/docs/user/plugins#questionable).
 
@@ -103,5 +103,7 @@ The job's result names the Questionable version it ran with and the workarounds 
 ## Questionable's priority list
 
 XIV MCP gives Questionable the quests to do as its priority list. Your own list is put back when the job ends, however it ends.
+
+Once the quests on its list are done, Questionable would go on to a quest of its own choosing, from your journal or the main scenario, and often teleports for it within a second or two. So on the last quest XIV MCP gave it, XIV MCP turns on Questionable's "stop after this quest" (the flag button in its quest window), and Questionable stops as that quest is done. Its window shows it stopping during that quest, and it says in chat when it stops; if you turn the flag off, XIV MCP turns it on again. When the job ends, the flag is off again.
 
 <Callout type="warn">Questionable walks, teleports (which costs gil), talks to NPCs and fights on its own. Set up its combat module in Questionable's settings, and stay near the game while it quests.</Callout>

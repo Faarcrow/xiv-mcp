@@ -159,7 +159,8 @@ internal static class QuestionableTools
                           "'tribe', the day's quests of an allied society (rank-up quests included). A quest counts as completed only when " +
                           "the game's quest state shows it turned in (out of the journal, completed) on two checks in a row. Looks again after each quest. Gives " +
                           "Questionable the quests as its priority list (its own list is put back afterwards) and stops it when done, after a " +
-                          "fight. Starts Questionable again when the character stands still for 2 minutes (at most 3 times). Fails when Questionable stops on its own, waits for the player (a duty, a solo duty, a step by hand) or turns to another quest. " +
+                          "fight; on the last quest it gives Questionable for the current job, it turns on Questionable's stop-after-this-quest, " +
+                          "so Questionable stops as that quest is done instead of going on to a quest of its own. Starts Questionable again when the character stands still for 2 minutes (at most 3 times). Fails when Questionable stops on its own, waits for the player (a duty, a solo duty, a step by hand) or turns to another quest. " +
                           "Where Questionable falls short (the job to accept a quest on, a step already done, a prompt it leaves open) it steps in; " +
                           "the result's 'workarounds' names Questionable's version and the workarounds used. Meant as a job step; complete_quest and " +
                           "do_tribe_dailies start it.",
@@ -257,6 +258,9 @@ internal static class QuestionableTools
         var completed = new List<string>();
         var workarounds = new WorkaroundLog(PluginId, await Game.Run(() => PluginCompat.Version(PluginId)).ConfigureAwait(false));
         using var chat = new QuestionableChat();
+        var stopArmed = false;
+        // The quests the stop flag was set for, so each counts once in the workarounds, also across rounds.
+        var armedQuests = new HashSet<uint>();
         try
         {
             while (true)
@@ -264,7 +268,7 @@ internal static class QuestionableTools
                 var quests = await Game.Run(plan).ConfigureAwait(false);
                 if (quests.Count == 0) return new RunResult(true, completed, workarounds.Report());
 
-                var (first, job, accepted) = await Game.Run(() =>
+                var (first, job, accepted, noPath) = await Game.Run(() =>
                 {
                     RefuseWrongJob(quests);
                     var noPath = Unsupported(quests).Select(q => q.Id).ToHashSet();
@@ -279,7 +283,7 @@ internal static class QuestionableTools
                     // QuestionableWorkarounds.PickJob): accept on one that can do it.
                     var job = IsAccepted(next) ? QuestJobs.ForAccepted(AcceptedJob(next) ?? 0, Gearsets.CurrentJob(), GearsetJobs()) : JobFor(next)
                               ?? throw new ToolException($"No gearset is saved for a job that can do {next.Name} ({JobNames(next.Jobs)}).");
-                    return (next, job, IsAccepted(next));
+                    return (next, job, IsAccepted(next), noPath);
                 }).ConfigureAwait(false);
 
                 if (job != await Game.Run(Gearsets.CurrentJob).ConfigureAwait(false))
@@ -327,11 +331,26 @@ internal static class QuestionableTools
                     ct.ThrowIfCancellationRequested();
                     if (DateTime.UtcNow > until) throw new ToolException($"Not done after {timeout.TotalMinutes:0} minutes; stopped while on {first.Name}.");
                     await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
-                    var s = await Game.Run(() => (Done: batch.FirstOrDefault(Finished), Running: IsRunning(), Current: Ipc<string?>("GetCurrentQuestId"),
-                                                  Position: Svc.Objects.LocalPlayer?.Position ?? default, Busy: Busy())).ConfigureAwait(false);
+                    // The round's last quest: Questionable stops by itself as it is done, before it picks a quest of its own. Set on
+                    // every look while it runs, as any stop (a restart, a stop of its own) clears it.
+                    var s = await Game.Run(() =>
+                    {
+                        var running = IsRunning();
+                        var current = Ipc<string?>("GetCurrentQuestId");
+                        return (Done: batch.FirstOrDefault(Finished), Running: running, Current: current,
+                                Position: Svc.Objects.LocalPlayer?.Position ?? default, Busy: Busy(),
+                                Armed: running ? ArmStopAfterRound(batch, noPath, current) : null);
+                    }).ConfigureAwait(false);
+                    if (s.Armed is { } armed)
+                    {
+                        stopArmed = true;
+                        if (armedQuests.Add(armed.Id)) workarounds.Used(QuestionableWorkarounds.StopAfterRound);
+                    }
                     if (turnedIn.Confirm(s.Done?.Id) is not null && s.Done is { } done)
                     {
                         completed.Add(done.Name);
+                        // Questionable's "stopping as requested" is no reason to quote in a later error.
+                        chat.Clear();
                         break;
                     }
                     // All accepted: plan again, so Questionable gets them back as plain priority quests to do in order.
@@ -410,6 +429,8 @@ internal static class QuestionableTools
             await Game.Run(() =>
             {
                 if (!Loaded) return true;
+                // Questionable clears the flag when it stops; set while it was stopped, it would outlast the run.
+                if (stopArmed) StopAfterCurrentQuest(false, "clearing it");
                 Ipc<bool>("ClearQuestPriority");
                 if (QuestionablePriority.Decode(backup).Count > 0) Ipc<string, bool>("ImportQuestPriority", backup);
                 return true;
@@ -516,6 +537,44 @@ internal static class QuestionableTools
         catch (Exception e)
         {
             Svc.Log.Warning($"[MCP] Questionable's accept-only flag is out of reach ({e.Message}); quests are accepted one after another.");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Sets Questionable's "stop after the current quest" flag for the round's last quest (<see cref="RoundEnd.Arm"/>). The quest it
+    /// is set for, or null. Framework thread.
+    /// </summary>
+    private static QuestInfo? ArmStopAfterRound(IReadOnlyList<QuestInfo> batch, IReadOnlySet<uint> noPath, string? current)
+    {
+        var left = RoundEnd.Left(batch, Finished, noPath);
+        return RoundEnd.Arm(left, current, left.Count == 1 && IsAccepted(left[0])) && StopAfterCurrentQuest(true, "setting it") ? left[0] : null;
+    }
+
+    // Warned about since the flag was last in reach: a Questionable reload can put it out of reach for a moment.
+    private static bool stopFlagOutOfReach;
+
+    /// <summary>
+    /// Questionable's "stop after the current quest" flag (QuestController.StopAfterCurrentQuest, the flag button in its quest window),
+    /// which is not on its IPC: through reflection, like the accept-only flag. False when out of reach, for example after a
+    /// Questionable update; then Questionable goes on as before. Framework thread.
+    /// </summary>
+    private static bool StopAfterCurrentQuest(bool on, string doing)
+    {
+        try
+        {
+            var controller = QuestController();
+            var flag = controller.GetType().GetProperty("StopAfterCurrentQuest", Any) ?? throw new InvalidOperationException("no StopAfterCurrentQuest");
+            if (flag.GetValue(controller) is bool now && now != on) flag.SetValue(controller, on);
+            stopFlagOutOfReach = false;
+            return true;
+        }
+        catch (Exception e)
+        {
+            if (!stopFlagOutOfReach)
+                Svc.Log.Warning($"[MCP] Questionable's stop-after-this-quest flag is out of reach ({e.Message}) while {doing}" +
+                                (on ? "; it may go on to a quest of its own after the last one." : "."));
+            stopFlagOutOfReach = true;
             return false;
         }
     }
