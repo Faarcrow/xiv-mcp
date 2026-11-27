@@ -62,7 +62,7 @@ public static class ToolSummaries
         ["set_triad_deck"] = "Saves five of your Triple Triad cards as one of your decks.",
         ["get_saucy_stats"] = "Checks how many Triple Triad matches were played, won and lost, and the cards and MGP won.",
         ["build_triad_deck"] = "Builds the best deck against a Triple Triad opponent and saves it as your fifth deck.",
-        ["play_triple_triad"] = "Goes to a Triple Triad opponent and plays a number of matches, or until a card drops.",
+        ["play_triple_triad"] = "Goes to a Triple Triad opponent and plays a number of matches, or until the wanted cards drop.",
         ["farm_triad_cards"] = "Collects missing Triple Triad cards from one opponent, or from opponent to opponent.",
         ["play_mini_cactpot"] = "Goes to the Mini Cactpot broker and plays your tickets for today.",
         ["play_jumbo_cactpot"] = "Collects your Jumbo Cactpot prizes and buys this week's tickets with your numbers or random ones.",

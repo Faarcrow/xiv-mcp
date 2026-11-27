@@ -294,7 +294,7 @@ internal static class SaucyTools
                           "going from opponent to opponent (the current zone first, then zone by zone, nearest next), optionally only in one " +
                           "'zone' and for at most 'max_npcs' opponents. Opponents locked behind a quest are left out; with skip_unavailable " +
                           "(default true) also those outside their hours right now. Each step goes to the opponent, plays (Saucy rematches " +
-                          "until a card drops) and checks after each drop. Follow it with get_job; skip a step or cancel with update_job / " +
+                          "until every card still missing from that opponent has dropped) and checks the cards when Saucy stops. Follow it with get_job; skip a step or cancel with update_job / " +
                           "cancel_job. Dropped cards arrive in the bags and still need to be registered (used) to join the collection.",
             InputSchema = """
                 {
@@ -530,6 +530,8 @@ internal static class SaucyTools
         var steps = new List<string>();
         await NavigationTools.GoToNpc(npc.Spot, steps, ct).ConfigureAwait(false);
         using var deck = await Game.Run(() => DeckSettings(args.Node("deck")?.ToString())).ConfigureAwait(false);
+        // Saucy's "Farm all NPC cards once" mode, limited to the cards the player is missing, is the all-cards goal itself.
+        using var missingOnly = await Game.Run(() => until == "all_cards" ? SaucyBridge.Override(("OnlyUnobtainedCards", true)) : SaucyBridge.Override()).ConfigureAwait(false);
         var before = await Game.Run(SaucyBridge.Stats).ConfigureAwait(false);
 
         var runs = 0;
@@ -539,11 +541,20 @@ internal static class SaucyTools
             while (true)
             {
                 runs++;
-                // One Saucy run: a fixed number of matches, or rematches until a card drops (also for a card / all-cards goal,
-                // which XIV MCP checks itself after each drop, counting cards in the bags).
-                var command = until == "matches" ? $"tt play {matches}" : "tt cards any";
+                // One Saucy run: a fixed number of matches, rematches until every missing card of the opponent dropped (all-cards
+                // goal), or until any card drops (any card, or one card, which XIV MCP checks itself after each drop, counting
+                // cards in the bags). The all-cards goal is checked after the run too, in case Saucy stopped early.
+                var command = until switch
+                {
+                    "matches" => $"tt play {matches}",
+                    "all_cards" => "tt cards all",
+                    _ => "tt cards any",
+                };
                 await Game.Run(() =>
                 {
+                    // Saucy farms the cards of the opponent the player targets (when standing near), else of the last one it played:
+                    // a finished last opponent ends the new run at once, and Saucy clicks the challenge away as it stops.
+                    Target(npc.NpcId);
                     SaucyBridge.Command(command);
                     SaucyBridge.Command("tt go");
                     Interact(npc.NpcId);
@@ -551,7 +562,7 @@ internal static class SaucyTools
                 }).ConfigureAwait(false);
                 steps.Add(runs == 1 ? $"Started playing {npc.Name}." : $"Playing {npc.Name} again (run {runs}).");
 
-                var played = await WaitForRun(npc.Name, ct).ConfigureAwait(false);
+                var played = await WaitForRun(npc.Name, totalMatches, ct).ConfigureAwait(false);
                 totalMatches += played;
                 if (played == 0) throw new ToolException($"Saucy stopped before a match began. Is {npc.Name} close enough to talk to, and is the match available (some opponents need a quest or a time of day)?");
                 if (goal is null) break;
@@ -585,25 +596,25 @@ internal static class SaucyTools
         };
     }
 
-    /// <summary>Waits until Saucy's run ends; returns the matches it finished (sampled, as Saucy resets the count when it ends).</summary>
-    private static async Task<int> WaitForRun(string npc, CancellationToken ct)
+    /// <summary>Waits until Saucy's run ends; returns the matches it finished. Progress counts from 'earlier' (matches of earlier runs).</summary>
+    private static async Task<int> WaitForRun(string npc, int earlier, CancellationToken ct)
     {
+        var before = await Game.Run(() => SaucyBridge.GamesPlayed).ConfigureAwait(false);
         var started = await WaitFor(() => SaucyBridge.TriadRunning, TimeSpan.FromSeconds(10), ct).ConfigureAwait(false);
         if (!started) throw new ToolException("Saucy did not start playing.");
-        var most = 0;
         var lastReported = -1;
         var deadline = DateTime.UtcNow.AddHours(6);
         while (DateTime.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
-            var (running, done) = await Game.Run(() => (SaucyBridge.TriadRunning, SaucyBridge.MatchesThisRun)).ConfigureAwait(false);
-            most = Math.Max(most, done);
-            if (most != lastReported)
+            var (running, games) = await Game.Run(() => (SaucyBridge.TriadRunning, SaucyBridge.GamesPlayed)).ConfigureAwait(false);
+            var done = earlier + games - before;
+            if (done != lastReported)
             {
-                Progress("play_triple_triad", $"{most} match{(most == 1 ? "" : "es")} against {npc}");
-                lastReported = most;
+                Progress("play_triple_triad", $"{done} match{(done == 1 ? "" : "es")} against {npc}");
+                lastReported = done;
             }
-            if (!running) return Math.Max(most, await Game.Run(() => SaucyBridge.MatchesThisRun).ConfigureAwait(false));
+            if (!running) return await Game.Run(() => SaucyBridge.GamesPlayed - before).ConfigureAwait(false);
             await Task.Delay(500, ct).ConfigureAwait(false);
         }
         throw new ToolException("Saucy has been playing for 6 hours without finishing; stopping here.");
