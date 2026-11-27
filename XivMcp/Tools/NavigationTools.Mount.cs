@@ -49,6 +49,11 @@ internal static partial class NavigationTools
         // While flying, Dismount first lands; pressing again during the descent would cancel it, so wait for each stage.
         for (var attempt = 0; attempt < 4 && await Game.Run(() => Mounted).ConfigureAwait(false); attempt++)
         {
+            // Touching down plays a landing that counts as jumping, and Dismount is refused then ("Unable to execute command while
+            // jumping"): wait for it to end first.
+            var settle = DateTime.UtcNow.AddSeconds(3);
+            while (DateTime.UtcNow < settle && await Game.Run(() => Landing).ConfigureAwait(false))
+                await Task.Delay(100, ct).ConfigureAwait(false);
             var flying = await Game.Run(() => InFlight).ConfigureAwait(false);
             await Game.Run(() => { unsafe { return ActionManager.Instance()->UseAction(ActionType.GeneralAction, Dismount); } }).ConfigureAwait(false);
             var until = DateTime.UtcNow.AddSeconds(4);
@@ -58,12 +63,18 @@ internal static partial class NavigationTools
         }
         if (await Game.Run(() => Mounted).ConfigureAwait(false))
             throw new ToolException("Could not get off the mount here (the ground below may be water or too steep). Move a bit and try again.");
+        // The landing goes on for a moment after the mount is gone, and the game refuses talking to anyone until it ends.
+        var landed = DateTime.UtcNow.AddSeconds(3);
+        while (DateTime.UtcNow < landed && await Game.Run(() => Landing).ConfigureAwait(false))
+            await Task.Delay(100, ct).ConfigureAwait(false);
         steps.Add("Got off the mount.");
     }
 
     private static bool Mounted => Svc.Condition[ConditionFlag.Mounted];
 
     private static bool InFlight => Svc.Condition[ConditionFlag.InFlight] || Svc.Condition[ConditionFlag.Diving];
+
+    private static bool Landing => Svc.Condition[ConditionFlag.Jumping] || Svc.Condition[ConditionFlag.MountOrOrnamentTransition];
 
     private static unsafe bool CanMount() => ActionManager.Instance()->GetActionStatus(ActionType.GeneralAction, MountRoulette) == 0;
 
