@@ -32,21 +32,20 @@ public class TriadAvailabilityTests
     [Fact]
     public void An_opponent_without_unlock_quests_is_open()
     {
-        Assert.True(TriadAvailability.IsUnlocked(beaten: false, ownsAReward: false, quests: [], isComplete: _ => false));
+        Assert.True(TriadAvailability.IsUnlocked(beaten: false, quests: [], isComplete: _ => false));
     }
 
     [Fact]
     public void Any_listed_quest_unlocks_the_opponent()
     {
-        Assert.False(TriadAvailability.IsUnlocked(false, false, [65800, 65801], _ => false));
-        Assert.True(TriadAvailability.IsUnlocked(false, false, [65800, 65801], q => q == 65801));
+        Assert.False(TriadAvailability.IsUnlocked(false, [65800, 65801], _ => false));
+        Assert.True(TriadAvailability.IsUnlocked(false, [65800, 65801], q => q == 65801));
     }
 
     [Fact]
-    public void Having_played_them_shows_they_are_unlocked()
+    public void Having_beaten_them_shows_they_are_unlocked()
     {
-        Assert.True(TriadAvailability.IsUnlocked(beaten: true, ownsAReward: false, quests: [65800], isComplete: _ => false));
-        Assert.True(TriadAvailability.IsUnlocked(beaten: false, ownsAReward: true, quests: [65800], isComplete: _ => false));
+        Assert.True(TriadAvailability.IsUnlocked(beaten: true, quests: [65800], isComplete: _ => false));
     }
 }
 

@@ -153,10 +153,10 @@ internal static class TriadData
         return ui != null && ui->IsTripleTriadNpcBeaten(triadId);
     }
 
-    /// <summary>Whether an opponent can be challenged: unlocked (quests, or played before), and inside their hours if they have any. Framework thread.</summary>
-    public static (bool Unlocked, bool OpenNow, IReadOnlyList<string> MissingQuests, string? Hours) Availability(Npc npc, IReadOnlySet<int> owned)
+    /// <summary>Whether an opponent can be challenged: unlocked (their quests done, or beaten before), and inside their hours if they have any. Framework thread.</summary>
+    public static (bool Unlocked, bool OpenNow, IReadOnlyList<string> MissingQuests, string? Hours) Availability(Npc npc)
     {
-        var unlocked = TripleTriad.TriadAvailability.IsUnlocked(Beaten(npc.TriadId), npc.RewardCards.Any(owned.Contains), npc.Quests, QuestDone);
+        var unlocked = TripleTriad.TriadAvailability.IsUnlocked(Beaten(npc.TriadId), npc.Quests, QuestDone);
         var quests = unlocked ? [] : npc.Quests.Select(q => Excel.NameOf<Quest>(q) ?? $"quest {q}").ToList();
         var hasHours = npc.StartTime != npc.EndTime;
         var open = TripleTriad.EorzeaClock.InWindow(npc.StartTime, npc.EndTime, TripleTriad.EorzeaClock.MinuteOfDay(DateTime.UtcNow));
