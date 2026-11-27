@@ -415,6 +415,23 @@ internal static partial class NavigationTools
         }
     }
 
+    /// <summary>
+    /// Waits until the character has not been casting for a second (up to 15 seconds): a teleport asked for during a cast is refused.
+    /// A cast can still begin right after; travel asks again when refused.
+    /// Casts often come in a row right after a step, e.g. Saucy registering the cards that just dropped, one item use each.
+    /// </summary>
+    private static async Task WaitOutCasts(CancellationToken ct)
+    {
+        var until = DateTime.UtcNow.AddSeconds(15);
+        var freeSince = DateTime.UtcNow;
+        while (DateTime.UtcNow < until)
+        {
+            if (await Game.Run(() => Svc.Condition[ConditionFlag.Casting]).ConfigureAwait(false)) freeSince = DateTime.UtcNow;
+            else if (DateTime.UtcNow - freeSince >= TimeSpan.FromSeconds(1)) return;
+            await Task.Delay(200, ct).ConfigureAwait(false);
+        }
+    }
+
     internal static void EnsureCanTravel()
     {
         InventoryActionTools.EnsureNotBusy();
