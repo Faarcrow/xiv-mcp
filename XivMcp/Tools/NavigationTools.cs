@@ -50,6 +50,7 @@ internal static partial class NavigationTools
                   "properties": {
                     "destination": { "type": "string", "enum": [{{string.Join(", ", Destinations.Select(d => $"\"{d}\""))}}] },
                     "name": { "type": "string", "description": "For destination=object: the object's name (e.g. \"Material Supplier\"). For destination=npc: the NPC's name (e.g. \"Masked Rose\"). For destination=fishing_spot: the spot's name or id." },
+                    "zone": { "type": "string", "description": "For destination=npc: part of the zone's or area's name (e.g. \"Pillars\" or \"Ishgard\"), when NPCs of the same name stand in several places. Without it the one that stands there for good and is nearest is picked." },
                     "timeout_seconds": { "type": "integer", "description": "Give up after this long (default 600, max 1800). The player may need a while when they walk or teleport themselves." }
                   },
                   "required": ["destination"]
@@ -73,7 +74,7 @@ internal static partial class NavigationTools
                 try
                 {
                     await WaitUntilFreeToTravel(cts.Token).ConfigureAwait(false);
-                    var result = await Navigate(destination, name, config, steps, cts.Token).ConfigureAwait(false);
+                    var result = await Navigate(destination, name, args.String("zone"), config, steps, cts.Token).ConfigureAwait(false);
                     return new { arrived = true, destination, at = result, steps };
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -140,7 +141,7 @@ internal static partial class NavigationTools
 
     // ------------------------------------------------------------------ flow
 
-    private static async Task<object> Navigate(string destination, string? name, Configuration config, List<string> steps, CancellationToken ct)
+    private static async Task<object> Navigate(string destination, string? name, string? zone, Configuration config, List<string> steps, CancellationToken ct)
     {
         switch (destination)
         {
@@ -157,8 +158,9 @@ internal static partial class NavigationTools
             case "npc":
             {
                 var territory = await Game.Run(() => (uint)Svc.ClientState.TerritoryType).ConfigureAwait(false);
-                var spot = await Task.Run(() => TriadData.FindNpc(name!, territory), ct).ConfigureAwait(false)
-                           ?? throw new ToolException($"No NPC named '{name}' has a place in the game data.");
+                var spot = await Task.Run(() => TriadData.FindNpc(name!, territory, zone), ct).ConfigureAwait(false)
+                           ?? throw new ToolException(zone is null ? $"No NPC named '{name}' has a place in the game data."
+                                                                   : $"No NPC named '{name}' stands in a zone matching '{zone}'.");
                 return await GoToNpc(spot, steps, ct).ConfigureAwait(false);
             }
 
