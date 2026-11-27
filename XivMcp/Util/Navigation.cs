@@ -29,6 +29,23 @@ internal static class Navigation
     /// <summary>The character follows a computed path (not still waiting for vnavmesh to compute it).</summary>
     public static bool PathWalking => Func<bool>("vnavmesh.Path.IsRunning") && !Func<bool>("vnavmesh.SimpleMove.PathfindInProgress");
 
+    /// <summary>
+    /// How far the character still has to go along the path vnavmesh follows, or null when no path is known. A path that goes
+    /// around a wall can lead away from the target for a while; measured along the path, it still gets shorter.
+    /// </summary>
+    public static float? PathLeft(Vector3 from)
+    {
+        try
+        {
+            var waypoints = Svc.PluginInterface.GetIpcSubscriber<System.Collections.Generic.List<Vector3>>("vnavmesh.Path.ListWaypoints").InvokeFunc();
+            return waypoints is { Count: > 0 } ? Maps.Approach.PathLength(from, waypoints) : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Pathfinds and walks (or flies, when mounted where flying is allowed) to within <paramref name="range"/> of a point.</summary>
     public static bool MoveCloseTo(Vector3 target, float range, bool fly = false) =>
         Svc.PluginInterface.GetIpcSubscriber<Vector3, bool, float, bool>("vnavmesh.SimpleMove.PathfindAndMoveCloseTo").InvokeFunc(target, fly, range);
