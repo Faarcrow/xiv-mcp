@@ -143,7 +143,7 @@ internal static class TriadData
         return ui != null && ui->IsTripleTriadNpcBeaten(triadId);
     }
 
-    /// <summary>Whether an opponent can be challenged: unlocked (quests, or played before), and inside their hours if they have any. Framework thread.</summary>
+    /// <summary>Whether an opponent can be challenged: unlocked (their quests done, or beaten before), and inside their hours if they have any. Framework thread.</summary>
     public static (bool Unlocked, bool OpenNow, IReadOnlyList<string> MissingQuests, string? Hours) Availability(Npc npc)
     {
         var unlocked = TripleTriad.TriadAvailability.IsUnlocked(Beaten(npc.TriadId), npc.Quests, QuestDone);
