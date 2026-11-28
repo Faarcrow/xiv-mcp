@@ -621,13 +621,15 @@ internal static class QuestionableTools
     }
 
     /// <summary>
-    /// The manual steps one run of quests skipped or looked at: the step Skip was last pressed at (pressed once per step), and the
-    /// craft or purchase step looked at last with whether its items were owned at the first look. Kept per run, so a later run (the
-    /// same daily the next day, a retried job) looks at its steps afresh.
+    /// The manual steps one run of quests skipped or looked at: the step Skip was last pressed at (pressed once per step), the craft
+    /// step whose Artisan list was last stopped (once per step), and the craft or purchase step looked at last with whether its
+    /// items were owned at the first look. Kept per run, so a later run (the same daily the next day, a retried job) looks at its
+    /// steps afresh.
     /// </summary>
     private sealed class StepSkips
     {
         public string? LastSkipped;
+        public string? ListStopped;
         public readonly OwnedAtStart Owned = new();
     }
 
@@ -662,7 +664,12 @@ internal static class QuestionableTools
                 if (!HasMelded(itemName)) return null;
                 done = (QuestionableWorkarounds.SkipMeldedStep, $"Questionable waited for \"{comment}\"; {itemName} already carries materia, so its step was skipped.");
             }
-            else if (CraftStepDone(step, type, key, skips.Owned) is { } crafted) done = (QuestionableWorkarounds.SkipOwnedItemsStep, crafted);
+            else if (CraftStepDone(step, type, key, skips) is { } crafted)
+            {
+                // Questionable's own step: the Artisan list was stopped, and Questionable finishes the step without a skip.
+                if (!crafted.Skip) return (QuestionableWorkarounds.SkipOwnedItemsStep, crafted.Message);
+                done = (QuestionableWorkarounds.SkipOwnedItemsStep, crafted.Message);
+            }
             else return null;
             var skip = controller.GetType().GetMethods(Any).FirstOrDefault(m => m.Name == "Skip" && m.GetParameters().Length == 2);
             if (skip is null) return null;
@@ -678,11 +685,13 @@ internal static class QuestionableTools
     }
 
     /// <summary>
-    /// A craft or purchase step whose items were already in the bags when the step started: stops the Artisan list Questionable
-    /// started for a craft (it would craft the quest's items again) and returns what to log; null when the step still needs its
-    /// items, or they arrived during the step (<see cref="OwnedAtStart"/>). Framework thread.
+    /// A craft or purchase step whose items are in the bags (<see cref="OwnedAtStart"/>). Owned when the step started: stops the
+    /// Artisan list Questionable started for a craft (it would craft the quest's items again), and the step is to be skipped. Made
+    /// during the step: the step is Questionable's, which finishes it, so only an Artisan list still running for it is stopped (it
+    /// would go on to the quest's other turn-ins), once. Returns what to log and whether to skip; null when there is nothing to do.
+    /// Framework thread.
     /// </summary>
-    private static unsafe string? CraftStepDone(object step, string? type, string key, OwnedAtStart owned)
+    private static unsafe (string Message, bool Skip)? CraftStepDone(object step, string? type, string key, StepSkips skips)
     {
         if (!XivMcp.Quests.CraftStep.Covers(type)) return null;
         var itemId = step.GetType().GetProperty("ItemId", Any)?.GetValue(step) as uint?;
@@ -692,12 +701,21 @@ internal static class QuestionableTools
         var im = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
         var nq = im->GetInventoryItemCount(id, false, false);
         var hq = im->GetInventoryItemCount(id, true, false);
-        if (!owned.Skip(key, XivMcp.Quests.CraftStep.IsDone(type, count, nq, hq, quality))) return null;
-        if (type == XivMcp.Quests.CraftStep.Craft &&
-            (CraftGatherTools.Ipc("Artisan.IsListRunning") == true || CraftGatherTools.Ipc("Artisan.IsBusy") == true))
-            CraftGatherTools.StopArtisan();
-        var what = type == XivMcp.Quests.CraftStep.Craft ? "craft" : "purchase";
-        return $"Questionable's {what} step for {count}x {Items.Name(id)} was skipped: the bags already hold {nq + hq}.";
+        var craft = type == XivMcp.Quests.CraftStep.Craft;
+        switch (skips.Owned.Next(key, XivMcp.Quests.CraftStep.IsDone(type, count, nq, hq, quality)))
+        {
+            case OwnedItemsAction.Skip:
+                if (craft && (CraftGatherTools.Ipc("Artisan.IsListRunning") == true || CraftGatherTools.Ipc("Artisan.IsBusy") == true))
+                    CraftGatherTools.StopArtisan();
+                return ($"Questionable's {(craft ? "craft" : "purchase")} step for {count}x {Items.Name(id)} was skipped: the bags already hold {nq + hq}.", true);
+            // Questionable's own craft for the step bounds what it asks Artisan for by what the bags hold; only the list does not.
+            case OwnedItemsAction.StopList when craft && key != skips.ListStopped && CraftGatherTools.Ipc("Artisan.IsListRunning") == true:
+                CraftGatherTools.StopArtisan();
+                skips.ListStopped = key;
+                return ($"The bags hold the {count}x {Items.Name(id)} of Questionable's craft step, so the Artisan list it started was stopped; Questionable finishes the step.", false);
+            default:
+                return null;
+        }
     }
 
     /// <summary>
